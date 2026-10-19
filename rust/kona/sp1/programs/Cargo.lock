@@ -2637,6 +2637,7 @@ dependencies = [
  "alloy-op-evm",
  "alloy-primitives",
  "bincode 2.0.1",
+ "serde",
  "slop-algebra",
  "sp1-hypercube",
  "sp1-primitives",
