@@ -17,6 +17,8 @@ pub struct OpBuilderConfig {
     pub gas_limit_config: OpGasLimitConfig,
     /// Local SDM `PostExec` production operator opt-in. Shared with the admin RPC.
     pub operator_sdm_opt_in: OperatorSdmOptIn,
+    /// Proof aggregates waiting for inclusion. Shared with the proof aggregation RPC.
+    pub proof_aggregation_pool: crate::proof_aggregation::ProofAggregationPool,
     /// Interop failsafe gate. Set by the interop filter client; read by the builder to exclude
     /// interop txs from blocks while it is enabled.
     pub interop_failsafe: InteropFailsafe,
@@ -38,6 +40,7 @@ impl OpBuilderConfig {
             da_config,
             gas_limit_config,
             operator_sdm_opt_in: OperatorSdmOptIn::default(),
+            proof_aggregation_pool: Default::default(),
             interop_failsafe: InteropFailsafe::default(),
             max_uncompressed_block_size: None,
         }

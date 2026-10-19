@@ -4,13 +4,13 @@ use crate::{
     error::OpPayloadBuilderError, payload::OpBuiltPayload,
 };
 use alloy_consensus::{BlockHeader, Sealable, Transaction, Typed2718, transaction::Recovered};
-use alloy_eips::eip2718::Encodable2718;
+use alloy_eips::eip2718::{Decodable2718, Encodable2718};
 use alloy_evm::Evm as AlloyEvm;
 use alloy_primitives::{Address, B256, Sealed, U256};
 use alloy_rpc_types_debug::ExecutionWitness;
 use alloy_rpc_types_engine::PayloadId;
 use op_alloy_consensus::{
-    ParsedPostExecPayload, SDMGasEntry, TxPostExec, build_post_exec_tx,
+    ParsedPostExecPayload, SDMGasEntry, TxPostExec, build_post_exec_tx, build_proof_aggregate_tx,
     parse_post_exec_payload_from_transactions, total_gas_refund,
 };
 use op_revm::{L1BlockInfo, constants::L1_BLOCK_CONTRACT};
@@ -494,6 +494,10 @@ impl<Txs> OpBuilder<'_, Txs> {
 
         // 3. if mem pool transactions are requested we execute them
         if !ctx.attributes().no_tx_pool() {
+            // A proof aggregate must directly follow the deposits, so it goes before any pool
+            // transaction. Derived blocks (`no_tx_pool`) carry their own in the attributes.
+            ctx.try_include_proof_aggregate(&mut info, &mut builder);
+
             let best_txs = best(ctx.best_transaction_attributes(builder.evm_mut().block()));
             if ctx
                 .execute_best_transactions(
@@ -1038,6 +1042,56 @@ where
         }
 
         Ok(info)
+    }
+
+    /// Includes the oldest pending proof aggregate, if any, as the next transaction.
+    ///
+    /// Must run directly after [`Self::execute_sequencer_transactions`]. A failed aggregate is
+    /// discarded rather than failing the build: the usual cause is that a previous block already
+    /// included it, so the registry no longer has its statements pending. The executor runs the
+    /// failed attempt without committing, so the block is unaffected.
+    pub fn try_include_proof_aggregate(
+        &self,
+        info: &mut ExecutionInfo,
+        builder: &mut impl BlockBuilder<Primitives = Evm::Primitives>,
+    ) {
+        if !self.chain_spec.is_proof_aggregation_active_at_timestamp(self.attributes().timestamp())
+        {
+            return;
+        }
+        let pool = &self.builder_config.proof_aggregation_pool;
+        let Some(aggregate) = pool.next_aggregate() else { return };
+
+        let encoded = build_proof_aggregate_tx(
+            self.parent().number() + 1,
+            aggregate.aggregation_vkey_hash,
+            aggregate.statements.clone(),
+            aggregate.proof.clone(),
+        )
+        .encoded_2718();
+        let tx = match TxTy::<Evm::Primitives>::decode_2718_exact(&encoded) {
+            Ok(tx) => Recovered::new_unchecked(tx, Address::ZERO),
+            Err(err) => {
+                warn!(target: "payload_builder", %err, "proof aggregate does not decode, discarding");
+                pool.discard_aggregate(&aggregate);
+                return;
+            }
+        };
+
+        match builder.execute_transaction(tx) {
+            Ok(_) => {
+                info.cumulative_uncompressed_bytes += encoded.len() as u64;
+                debug!(
+                    target: "payload_builder",
+                    statements = aggregate.statements.len(),
+                    "proof aggregate included in block"
+                );
+            }
+            Err(err) => {
+                warn!(target: "payload_builder", %err, "proof aggregate rejected, discarding");
+                pool.discard_aggregate(&aggregate);
+            }
+        }
     }
 
     /// Executes the given best transactions and updates the execution info.
