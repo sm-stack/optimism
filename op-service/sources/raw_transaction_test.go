@@ -13,6 +13,8 @@ import (
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/trie"
+
+	optypes "github.com/ethereum-optimism/optimism/op-core/types"
 )
 
 // l2BlockTxs builds the transaction list shape of a Lagoon-era L2 block via
@@ -239,4 +241,30 @@ func TestRawTransactionsGeth(t *testing.T) {
 
 	_, err = RawTransactions{{0xff}}.Geth()
 	require.Error(t, err)
+}
+
+// TestRawTransactionJSONProofAggregate covers the 0x7C class: an RPC object round-trips to its
+// canonical encoding and back, user-tx partitioning skips it, and empty input is rejected.
+func TestRawTransactionJSONProofAggregate(t *testing.T) {
+	data := []byte{0xc2, 0x80, 0x80}
+	want, err := (&optypes.ProofAggregateTx{Data: data}).MarshalBinary()
+	require.NoError(t, err)
+
+	var tx RawTransaction
+	require.NoError(t, json.Unmarshal([]byte(`{"type":"0x7c","input":"0xc28080"}`), &tx))
+	require.Equal(t, RawTransaction(want), tx)
+	require.Equal(t, byte(optypes.ProofAggregateTxType), tx.Type())
+
+	enc, err := json.Marshal(tx)
+	require.NoError(t, err)
+	var again RawTransaction
+	require.NoError(t, json.Unmarshal(enc, &again))
+	require.Equal(t, tx, again)
+
+	userTxs, err := RawTransactions{tx}.UserTxs()
+	require.NoError(t, err)
+	require.Empty(t, userTxs)
+
+	err = json.Unmarshal([]byte(`{"type":"0x7c","input":"0x"}`), &tx)
+	require.ErrorContains(t, err, "invalid proof aggregate tx")
 }

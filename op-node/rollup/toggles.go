@@ -29,6 +29,14 @@ func (c *Config) IsSDM(time uint64) bool {
 	return c.IsLagoon(time)
 }
 
+// IsProofAggregation gates SP1 proof aggregation: when false, batches carrying proof aggregate
+// (0x7C) transactions are rejected during derivation. Defers to the hardfork where the feature is
+// activated, matching op-reth's `is_proof_aggregation_active_at_timestamp` and kona's
+// `is_proof_aggregation_active`.
+func (c *Config) IsProofAggregation(time uint64) bool {
+	return c.IsLagoon(time)
+}
+
 // IsInterop returns true if the interoperability feature is active at or past the given timestamp.
 // The feature defers to the hardfork where interop is activated; this toggle exists so the feature
 // can be decoupled from the fork if needed.

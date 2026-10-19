@@ -645,6 +645,31 @@ mod tests {
         assert_eq!(statements_commitment(&[]), keccak256([]));
     }
 
+    /// Golden vector shared with op-core's `TestProofAggregateTxHashGoldenVector` (Go): the
+    /// canonical encoding and hash of a 0x7C transaction.
+    #[test]
+    fn proof_aggregate_tx_golden_vector() {
+        let tx = build_proof_aggregate_tx(
+            42,
+            B256::repeat_byte(0xaa),
+            vec![ProofStatement {
+                vkey_hash: B256::repeat_byte(0x11),
+                public_values_digest: B256::repeat_byte(0x22),
+            }],
+            bytes!("deadbeef"),
+        );
+        assert_eq!(
+            alloy_primitives::hex::encode(tx.encoded_2718()),
+            "7cf86e012aa0aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaf844f842a0\
+             1111111111111111111111111111111111111111111111111111111111111111a022222222222222222222\
+             2222222222222222222222222222222222222222222284deadbeef"
+        );
+        assert_eq!(
+            tx.tx_hash(),
+            b256!("0x03f4ebe12e9cb4814835bdb10dff45302f484edc3eaeff030cdb6c518dcde956")
+        );
+    }
+
     /// Golden vector shared with `ProofRegistry_StatementId_Test` in contracts-bedrock.
     #[test]
     fn statement_id_matches_registry_encoding() {

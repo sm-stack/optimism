@@ -83,6 +83,30 @@ func (txData *spanBatchPostExecTxData) DecodeRLP(s *rlp.Stream) error {
 	return nil
 }
 
+// spanBatchProofAggregateTxData carries a proof aggregate (0x7C) transaction: like a post-exec
+// transaction, only its opaque payload is stored, written without an outer RLP list.
+type spanBatchProofAggregateTxData struct {
+	Data []byte
+}
+
+func (txData *spanBatchProofAggregateTxData) txType() byte { return optypes.ProofAggregateTxType }
+
+// EncodeRLP writes the opaque proof aggregate payload bytes directly.
+func (txData *spanBatchProofAggregateTxData) EncodeRLP(w io.Writer) error {
+	_, err := w.Write(txData.Data)
+	return err
+}
+
+// DecodeRLP captures the complete opaque proof aggregate payload value.
+func (txData *spanBatchProofAggregateTxData) DecodeRLP(s *rlp.Stream) error {
+	data, err := s.Raw()
+	if err != nil {
+		return err
+	}
+	txData.Data = data
+	return nil
+}
+
 // Type returns the transaction type.
 func (tx *spanBatchTx) Type() uint8 {
 	return tx.inner.txType()
@@ -143,6 +167,13 @@ func (tx *spanBatchTx) decodeTyped(b []byte) (spanBatchTxData, error) {
 		err := rlp.DecodeBytes(b[1:], &inner)
 		if err != nil {
 			return nil, fmt.Errorf("failed to decode spanBatchPostExecTxData: %w", err)
+		}
+		return &inner, nil
+	case optypes.ProofAggregateTxType:
+		var inner spanBatchProofAggregateTxData
+		err := rlp.DecodeBytes(b[1:], &inner)
+		if err != nil {
+			return nil, fmt.Errorf("failed to decode spanBatchProofAggregateTxData: %w", err)
 		}
 		return &inner, nil
 	default:
@@ -246,6 +277,10 @@ func (tx *spanBatchTx) convertToFullTx(nonce, gas uint64, to *common.Address, ch
 		postExecTxInner := tx.inner.(*spanBatchPostExecTxData)
 		postExecTx := optypes.PostExecTx{Data: common.CopyBytes(postExecTxInner.Data)}
 		return postExecTx.MarshalBinary()
+	case optypes.ProofAggregateTxType:
+		inner := tx.inner.(*spanBatchProofAggregateTxData)
+		aggregateTx := optypes.ProofAggregateTx{Data: common.CopyBytes(inner.Data)}
+		return aggregateTx.MarshalBinary()
 	default:
 		return nil, fmt.Errorf("invalid tx type: %d", tx.Type())
 	}
@@ -254,8 +289,8 @@ func (tx *spanBatchTx) convertToFullTx(nonce, gas uint64, to *common.Address, ch
 
 // newSpanBatchTx converts a signed types.Transaction to spanBatchTx. The OP Stack
 // synthetic transaction classes are not signed transactions and do not pass through
-// here: post-exec transactions are converted from their canonical encoding by
-// spanBatchTxs.addPostExecTx, and deposits are never batched.
+// here: post-exec and proof aggregate transactions are converted from their canonical
+// encoding by spanBatchTxs.addSyntheticTx, and deposits are never batched.
 func newSpanBatchTx(tx *types.Transaction) (*spanBatchTx, error) {
 	var inner spanBatchTxData
 	switch tx.Type() {

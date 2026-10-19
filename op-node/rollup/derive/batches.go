@@ -173,10 +173,11 @@ func checkSingularBatch(cfg *rollup.Config, log log.Logger, l1Blocks []eth.L1Blo
 
 	isIsthmus := cfg.IsIsthmus(batch.Timestamp)
 	isSDM := cfg.IsSDM(batch.Timestamp)
+	isProofAggregation := cfg.IsProofAggregation(batch.Timestamp)
 
 	// We can do this check earlier, but it's a more intensive one, so we do this last.
 	for i, txBytes := range batch.Transactions {
-		if validity := checkSequencerTxData(log, i, txBytes, isIsthmus, isSDM); validity != BatchAccept {
+		if validity := checkSequencerTxData(log, i, txBytes, isIsthmus, isSDM, isProofAggregation); validity != BatchAccept {
 			return validity
 		}
 	}
@@ -184,7 +185,7 @@ func checkSingularBatch(cfg *rollup.Config, log log.Logger, l1Blocks []eth.L1Blo
 	return BatchAccept
 }
 
-func checkSequencerTxData(log log.Logger, txIndex int, txBytes []byte, isIsthmus, isSDM bool) BatchValidity {
+func checkSequencerTxData(log log.Logger, txIndex int, txBytes []byte, isIsthmus, isSDM, isProofAggregation bool) BatchValidity {
 	if len(txBytes) == 0 {
 		log.Warn("transaction data must not be empty, but found empty tx", "tx_index", txIndex)
 		return BatchDrop
@@ -201,6 +202,11 @@ func checkSequencerTxData(log log.Logger, txIndex int, txBytes []byte, isIsthmus
 	case optypes.PostExecTxType:
 		if !isSDM {
 			log.Warn("sequencers may not embed any PostExec transactions before SDM", "tx_index", txIndex)
+			return BatchDrop
+		}
+	case optypes.ProofAggregateTxType:
+		if !isProofAggregation {
+			log.Warn("sequencers may not embed any proof aggregate transactions before proof aggregation is active", "tx_index", txIndex)
 			return BatchDrop
 		}
 	}
@@ -411,8 +417,9 @@ func checkSpanBatch(ctx context.Context, cfg *rollup.Config, log log.Logger, l1B
 
 		isIsthmus := cfg.IsIsthmus(blockTimestamp)
 		isSDM := cfg.IsSDM(blockTimestamp)
+		isProofAggregation := cfg.IsProofAggregation(blockTimestamp)
 		for i, txBytes := range batch.GetBlockTransactions(i) {
-			if validity := checkSequencerTxData(log, i, txBytes, isIsthmus, isSDM); validity != BatchAccept {
+			if validity := checkSequencerTxData(log, i, txBytes, isIsthmus, isSDM, isProofAggregation); validity != BatchAccept {
 				return validity
 			}
 		}

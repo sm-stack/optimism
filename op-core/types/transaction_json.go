@@ -3,6 +3,7 @@ package types
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"math/big"
 
 	"github.com/ethereum/go-ethereum/common"
@@ -160,39 +161,92 @@ func (p *PostExecTx) MarshalJSON() ([]byte, error) {
 // value 0x7D, which the binary decoders (UnmarshalPostExecTx, op-geth,
 // op-alloy) all reject — accepting it here would produce a transaction with no
 // canonical encoding.
-func (p *PostExecTx) UnmarshalJSON(input []byte) error {
+// decodeSyntheticTxJSON decodes the RPC transaction object of an unsigned OP Stack synthetic
+// transaction whose only content is its opaque input (post-exec, proof aggregate), applying
+// op-geth's post-exec field validation, and returns the input. It rejects empty input, which
+// would encode to a bare type byte that the binary decoders reject.
+func decodeSyntheticTxJSON(input []byte, typ byte, name string) ([]byte, error) {
 	var dec txJSON
 	if err := json.Unmarshal(input, &dec); err != nil {
-		return err
+		return nil, err
 	}
-	if dec.Type == nil || *dec.Type != hexutil.Uint64(PostExecTxType) {
-		return errors.New("transaction type is not post-exec")
+	if dec.Type == nil || *dec.Type != hexutil.Uint64(typ) {
+		return nil, fmt.Errorf("transaction type is not %s", name)
 	}
 	if (dec.AccessList != nil && len(*dec.AccessList) != 0) ||
 		dec.Mint != nil || dec.SourceHash != nil || dec.IsSystemTx != nil || dec.To != nil {
-		return errors.New("unexpected field(s) in post-exec transaction")
+		return nil, fmt.Errorf("unexpected field(s) in %s transaction", name)
 	}
 	if dec.From != nil && *dec.From != (common.Address{}) {
-		return errors.New("post-exec transaction from must be zero address or unset")
+		return nil, fmt.Errorf("%s transaction from must be zero address or unset", name)
 	}
 	if dec.Nonce != nil && uint64(*dec.Nonce) != 0 {
-		return errors.New("post-exec transaction nonce must be 0 or unset")
+		return nil, fmt.Errorf("%s transaction nonce must be 0 or unset", name)
 	}
 	if isNonZero(dec.Value) {
-		return errors.New("post-exec transaction value must be 0")
+		return nil, fmt.Errorf("%s transaction value must be 0", name)
 	}
 	if dec.Gas != nil && uint64(*dec.Gas) != 0 {
-		return errors.New("post-exec transaction gas must be 0")
+		return nil, fmt.Errorf("%s transaction gas must be 0", name)
 	}
 	if nonZeroSignature(&dec) {
-		return errors.New("post-exec transaction signature must be 0 or unset")
+		return nil, fmt.Errorf("%s transaction signature must be 0 or unset", name)
 	}
 	if dec.Input == nil {
-		return errors.New("missing required field 'input' in transaction")
+		return nil, errors.New("missing required field 'input' in transaction")
 	}
 	if len(*dec.Input) == 0 {
-		return errors.New("post-exec transaction input must not be empty")
+		return nil, fmt.Errorf("%s transaction input must not be empty", name)
 	}
-	p.Data = *dec.Input
+	return *dec.Input, nil
+}
+
+func (p *PostExecTx) UnmarshalJSON(input []byte) error {
+	data, err := decodeSyntheticTxJSON(input, PostExecTxType, "post-exec")
+	if err != nil {
+		return err
+	}
+	p.Data = data
+	return nil
+}
+
+// Hash returns the transaction hash: the keccak-256 hash of the canonical
+// EIP-2718 encoding — the rule every typed transaction follows, shared with
+// op-reth (see TestProofAggregateTxHashGoldenVector). See DepositTx.Hash for the
+// panic rationale.
+func (p *ProofAggregateTx) Hash() common.Hash {
+	raw, err := p.MarshalBinary()
+	if err != nil {
+		panic(err)
+	}
+	return crypto.Keccak256Hash(raw)
+}
+
+// MarshalJSON encodes the proof aggregate transaction in the RPC transaction
+// format op-reth serves, including the transaction hash.
+func (p *ProofAggregateTx) MarshalJSON() ([]byte, error) {
+	typ := hexutil.Uint64(ProofAggregateTxType)
+	zeroGas := hexutil.Uint64(0)
+	enc := &txJSON{
+		Type:  &typ,
+		Gas:   &zeroGas,
+		Value: (*hexutil.Big)(new(big.Int)),
+		Input: (*hexutil.Bytes)(&p.Data),
+		Hash:  p.Hash(),
+	}
+	return json.Marshal(enc)
+}
+
+// UnmarshalJSON decodes a proof aggregate transaction from the RPC transaction
+// format op-reth serves, applying the same field validation as PostExecTx,
+// including the non-empty input rule: empty input would encode to the one-byte
+// value 0x7C, which the binary decoders (UnmarshalProofAggregateTx and op-alloy)
+// reject.
+func (p *ProofAggregateTx) UnmarshalJSON(input []byte) error {
+	data, err := decodeSyntheticTxJSON(input, ProofAggregateTxType, "proof aggregate")
+	if err != nil {
+		return err
+	}
+	p.Data = data
 	return nil
 }

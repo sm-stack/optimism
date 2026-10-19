@@ -698,6 +698,23 @@ mod tests {
         assert_eq!(span_batch_txs.full_txs(1).unwrap(), vec![buf]);
     }
 
+    /// The golden proof aggregate transaction op-node's span batch tests pin
+    /// (`testProofAggregateTxRaw`): both clients store it verbatim as span batch tx data and
+    /// reconstruct the same bytes.
+    #[test]
+    fn test_proof_aggregate_span_batch_golden_vector() {
+        let raw = alloy_primitives::hex::decode(
+            "7cf86e012aa0aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaf844f842a0\
+             1111111111111111111111111111111111111111111111111111111111111111a0\
+             222222222222222222222222222222222222222222222222222222222222222284deadbeef",
+        )
+        .unwrap();
+        let mut txs = SpanBatchTransactions::default();
+        txs.add_txs(vec![Bytes::from(raw.clone())], 901).unwrap();
+        assert_eq!(txs.tx_data, vec![raw.clone()]);
+        assert_eq!(txs.full_txs(901).unwrap(), vec![raw]);
+    }
+
     #[test]
     fn test_check_proof_aggregate_slots_rejects_tampered_slots() {
         let err = || SpanBatchError::Decoding(SpanDecodingError::InvalidProofAggregateSlots);

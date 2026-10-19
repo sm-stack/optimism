@@ -45,7 +45,7 @@ type EthHeader interface {
 }
 
 // EthL2BlockTxs partitions an L2 block's transactions by class: the OP Stack
-// synthetic transactions (0x7E deposits, 0x7D post-exec) are routed to
+// synthetic transactions (0x7E deposits, 0x7D post-exec, 0x7C proof aggregate) are routed to
 // op-core/types structs, and the remainder — standard Ethereum transactions —
 // decode as go-ethereum types on any block. Use these instead of InfoAndTxsBy*
 // for L2 blocks, whose full transaction lists upstream go-ethereum cannot

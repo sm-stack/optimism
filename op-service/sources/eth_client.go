@@ -414,7 +414,7 @@ func (s *EthClient) InfoAndTxsByLabel(ctx context.Context, label eth.BlockLabel)
 
 // InfoAndUserTxsByHash returns the block info and the block's standard
 // Ethereum transactions, excluding the OP Stack synthetic classes (0x7E
-// deposits and 0x7D post-exec). The returned list decodes with upstream
+// deposits, 0x7D post-exec and 0x7C proof aggregate). The returned list decodes with upstream
 // go-ethereum on any block, L2 included.
 func (s *EthClient) InfoAndUserTxsByHash(ctx context.Context, hash common.Hash) (eth.BlockInfo, types.Transactions, error) {
 	header, rawTxs, err := s.headerAndRawTxsByHash(ctx, hash)
