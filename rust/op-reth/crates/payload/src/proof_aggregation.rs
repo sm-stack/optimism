@@ -37,9 +37,8 @@
 //!
 //! Smaller proofs are the lasting fix; a WHIR-based proof would be roughly a fifth of the size.
 
-use alloy_primitives::{B256, Bytes};
-use op_alloy_consensus::ProofStatement;
-use serde::{Deserialize, Serialize};
+use alloy_primitives::B256;
+pub use op_alloy_consensus::{PendingAggregate, StatementProof};
 use std::{
     collections::{BTreeMap, VecDeque},
     sync::{Arc, Mutex, MutexGuard},
@@ -65,34 +64,6 @@ pub const MAX_VERIFYING_KEY_BYTES: usize = 4 * 1024;
 
 /// Upper bound on aggregates waiting for inclusion.
 pub const MAX_PENDING_AGGREGATES: usize = 16;
-
-/// A verified proof behind a `ProofRegistry` statement.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct StatementProof {
-    /// The statement the proof proves.
-    pub statement: ProofStatement,
-    /// The public values whose SHA-256 is `statement.public_values_digest`.
-    pub public_values: Bytes,
-    /// The SP1 compressed proof, bincode-encoded `SP1Proof`.
-    pub proof: Bytes,
-    /// The proven program's verifying key, bincode-encoded `SP1VerifyingKey`. The aggregation
-    /// program needs the full key, not just `statement.vkey_hash`, to verify the proof
-    /// recursively.
-    pub verifying_key: Bytes,
-}
-
-/// A verified aggregate proof waiting to be included in a block.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct PendingAggregate {
-    /// Verifying key digest of the aggregation program.
-    pub aggregation_vkey_hash: B256,
-    /// The statements the aggregate covers, in the order the aggregation program verified them.
-    pub statements: Vec<ProofStatement>,
-    /// The aggregation program's SP1 compressed proof, bincode-encoded `SP1Proof`.
-    pub proof: Bytes,
-}
 
 /// Why the pool refused an insertion.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
@@ -308,6 +279,8 @@ impl ProofAggregationPool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloy_primitives::Bytes;
+    use op_alloy_consensus::ProofStatement;
 
     fn statement_proof(byte: u8) -> StatementProof {
         StatementProof {

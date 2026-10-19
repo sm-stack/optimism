@@ -407,7 +407,7 @@ impl SpanBatchTransactions {
     ///
     /// Proof aggregate (`0x7C`) transactions are unsigned system transactions too, and the same
     /// zero-slot rule applies to them for the same reason.
-    pub fn check_post_exec_slots(&self) -> Result<(), SpanBatchError> {
+    pub fn check_system_tx_slots(&self) -> Result<(), SpanBatchError> {
         for (idx, tx_type) in self.tx_types.iter().enumerate() {
             let kind = match tx_type {
                 OpTxType::PostExec => SpanDecodingError::InvalidPostExecSlots,
@@ -694,7 +694,7 @@ mod tests {
         assert_eq!(span_batch_txs.tx_types, vec![OpTxType::ProofAggregate]);
         assert!(span_batch_txs.tx_tos.is_empty());
         assert_eq!(span_batch_txs.zero_to_bits.get_bit(0), Some(1));
-        assert_eq!(span_batch_txs.check_post_exec_slots(), Ok(()));
+        assert_eq!(span_batch_txs.check_system_tx_slots(), Ok(()));
         assert_eq!(span_batch_txs.full_txs(1).unwrap(), vec![buf]);
     }
 
@@ -726,15 +726,15 @@ mod tests {
 
         let mut tampered = txs();
         tampered.zero_to_bits.set_bit(0, false);
-        assert_eq!(tampered.check_post_exec_slots(), Err(err()));
+        assert_eq!(tampered.check_system_tx_slots(), Err(err()));
 
         let mut tampered = txs();
         tampered.tx_nonces[0] = 1;
-        assert_eq!(tampered.check_post_exec_slots(), Err(err()));
+        assert_eq!(tampered.check_system_tx_slots(), Err(err()));
 
         let mut tampered = txs();
         tampered.tx_gases[0] = 1;
-        assert_eq!(tampered.check_post_exec_slots(), Err(err()));
+        assert_eq!(tampered.check_system_tx_slots(), Err(err()));
     }
 
     /// Builds the span batch transposition of a single post-exec transaction, as a batcher
@@ -755,44 +755,44 @@ mod tests {
     }
 
     #[test]
-    fn test_check_post_exec_slots_accepts_honest_encoding() {
-        assert_eq!(post_exec_span_batch_txs().check_post_exec_slots(), Ok(()));
+    fn test_check_system_tx_slots_accepts_honest_encoding() {
+        assert_eq!(post_exec_span_batch_txs().check_system_tx_slots(), Ok(()));
     }
 
     #[test]
-    fn test_check_post_exec_slots_rejects_tampered_slots() {
+    fn test_check_system_tx_slots_rejects_tampered_slots() {
         let err = || SpanBatchError::Decoding(SpanDecodingError::InvalidPostExecSlots);
 
         // Clearing the zero-`to` bit would make the transaction consume a `tx_tos`
         // entry it has no field for.
         let mut txs = post_exec_span_batch_txs();
         txs.zero_to_bits.set_bit(0, false);
-        assert_eq!(txs.check_post_exec_slots(), Err(err()));
+        assert_eq!(txs.check_system_tx_slots(), Err(err()));
 
         // A post-exec transaction is unsigned: r, s and the y parity bit are all zero.
         let mut txs = post_exec_span_batch_txs();
         txs.tx_sigs[0] = Signature::new(U256::from(1), U256::ZERO, false);
-        assert_eq!(txs.check_post_exec_slots(), Err(err()));
+        assert_eq!(txs.check_system_tx_slots(), Err(err()));
 
         let mut txs = post_exec_span_batch_txs();
         txs.tx_sigs[0] = Signature::new(U256::ZERO, U256::from(1), false);
-        assert_eq!(txs.check_post_exec_slots(), Err(err()));
+        assert_eq!(txs.check_system_tx_slots(), Err(err()));
 
         let mut txs = post_exec_span_batch_txs();
         txs.tx_sigs[0] = Signature::new(U256::ZERO, U256::ZERO, true);
-        assert_eq!(txs.check_post_exec_slots(), Err(err()));
+        assert_eq!(txs.check_system_tx_slots(), Err(err()));
 
         let mut txs = post_exec_span_batch_txs();
         txs.tx_nonces[0] = 1;
-        assert_eq!(txs.check_post_exec_slots(), Err(err()));
+        assert_eq!(txs.check_system_tx_slots(), Err(err()));
 
         let mut txs = post_exec_span_batch_txs();
         txs.tx_gases[0] = 1;
-        assert_eq!(txs.check_post_exec_slots(), Err(err()));
+        assert_eq!(txs.check_system_tx_slots(), Err(err()));
     }
 
     #[test]
-    fn test_check_post_exec_slots_ignores_other_tx_types() {
+    fn test_check_system_tx_slots_ignores_other_tx_types() {
         // An ordinary transaction carries a real signature, nonce and gas, and the rule must
         // not reach it.
         let sig = Signature::test_signature();
@@ -803,7 +803,7 @@ mod tests {
 
         let mut txs = SpanBatchTransactions::default();
         txs.add_txs(vec![Bytes::from(buf)], 1).unwrap();
-        assert_eq!(txs.check_post_exec_slots(), Ok(()));
+        assert_eq!(txs.check_system_tx_slots(), Ok(()));
     }
 
     #[test]

@@ -33,15 +33,7 @@ fn deposit_tx_env(tx: &TxDeposit, caller: Address) -> TxEnv {
 /// never transacted (the EVM short-circuits them with the consensus-defined no-op result), and
 /// preserving the zero gas limit ensures accidental execution fails intrinsic gas validation.
 pub fn post_exec_tx_env(tx: &TxPostExec, caller: Address) -> TxEnv {
-    TxEnv {
-        caller,
-        chain_id: tx.chain_id(),
-        data: tx.input().clone(),
-        gas_limit: tx.gas_limit(),
-        kind: tx.kind(),
-        tx_type: tx.ty(),
-        ..Default::default()
-    }
+    system_tx_env(tx, caller)
 }
 
 /// Builds the [`TxEnv`] for a proof aggregate transaction.
@@ -50,6 +42,11 @@ pub fn post_exec_tx_env(tx: &TxPostExec, caller: Address) -> TxEnv {
 /// executor verifies the aggregate proof and performs the registry call itself. The env mirrors the
 /// transaction, and the zero gas limit makes accidental execution fail intrinsic gas validation.
 pub fn proof_aggregate_tx_env(tx: &TxProofAggregate, caller: Address) -> TxEnv {
+    system_tx_env(tx, caller)
+}
+
+/// Builds a [`TxEnv`] that mirrors a system transaction the block executor never transacts.
+fn system_tx_env(tx: &impl Transaction, caller: Address) -> TxEnv {
     TxEnv {
         caller,
         chain_id: tx.chain_id(),

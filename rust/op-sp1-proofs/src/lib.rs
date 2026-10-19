@@ -32,6 +32,16 @@ pub fn vkey_hash_to_koalabear(vkey_hash: B256) -> Option<[SP1Field; 8]> {
     Some(out)
 }
 
+/// Splits a verifying key digest in the `vkey_hash` encoding into the eight words SP1's
+/// `verify_sp1_proof` takes (`HashableKey::hash_u32`). The inverse of [`vkey_hash_from_words`].
+pub fn vkey_hash_to_words(vkey_hash: B256) -> [u32; 8] {
+    let mut words = [0u32; 8];
+    for (word, chunk) in words.iter_mut().zip(vkey_hash.chunks_exact(4)) {
+        *word = u32::from_be_bytes(chunk.try_into().expect("4-byte chunk"));
+    }
+    words
+}
+
 /// Encodes a verifying key digest given as eight words (SP1's `HashableKey::hash_u32`) in the
 /// `vkey_hash` encoding: each word big-endian, concatenated.
 pub fn vkey_hash_from_words(words: [u32; 8]) -> B256 {
@@ -138,6 +148,7 @@ mod tests {
         let hash = vkey_hash_from_words(words);
         let field = vkey_hash_to_koalabear(hash).unwrap();
         assert_eq!(field.map(|f| f.as_canonical_u32()), words);
+        assert_eq!(vkey_hash_to_words(hash), words);
     }
 
     #[test]

@@ -14,8 +14,10 @@ use core::fmt::Debug;
 pub const PROOF_REGISTRY_ADDRESS: Address = address!("0x4200000000000000000000000000000000000031");
 
 /// Caller of the registry's `verifyStatements`: the system address used for system calls.
-pub const PROOF_AGGREGATE_SYSTEM_CALLER: Address =
-    address!("0xfffffffffffffffffffffffffffffffffffffffe");
+pub const PROOF_AGGREGATE_SYSTEM_CALLER: Address = alloy_eips::eip4788::SYSTEM_ADDRESS;
+
+/// Selector of `ProofRegistry.verifyStatements(bytes32,bytes32[])`.
+pub const VERIFY_STATEMENTS_SELECTOR: [u8; 4] = [0x9a, 0x7b, 0xc4, 0xf1];
 
 /// `ProofRegistry.StatementStatus.Pending`: the statement is registered and its fee paid, but no
 /// aggregate has verified it yet. Only pending statements can be verified.
@@ -52,11 +54,6 @@ pub trait ProofAggregateVerifier: Debug + Send + Sync {
 /// Shared handle to a [`ProofAggregateVerifier`], as carried by the block execution context.
 pub type SharedProofAggregateVerifier = Arc<dyn ProofAggregateVerifier>;
 
-/// Selector of `ProofRegistry.verifyStatements(bytes32,bytes32[])`.
-pub fn verify_statements_selector() -> [u8; 4] {
-    keccak256("verifyStatements(bytes32,bytes32[])")[..4].try_into().expect("4-byte selector")
-}
-
 /// Whether `output` is the registry's acknowledgement of `verifyStatements`: its own selector,
 /// returned as an ABI-encoded `bytes4`.
 ///
@@ -64,14 +61,14 @@ pub fn verify_statements_selector() -> [u8; 4] {
 /// recorded anything.
 pub fn is_verify_statements_ack(output: &[u8]) -> bool {
     output.len() == 32 &&
-        output[..4] == verify_statements_selector() &&
+        output[..4] == VERIFY_STATEMENTS_SELECTOR &&
         output[4..].iter().all(|b| *b == 0)
 }
 
 /// ABI-encodes `ProofRegistry.verifyStatements(bytes32 aggregationVkeyHash, bytes32[]
 /// statementIds)`.
 pub fn verify_statements_calldata(aggregation_vkey_hash: B256, statement_ids: &[B256]) -> Bytes {
-    let selector = verify_statements_selector();
+    let selector = VERIFY_STATEMENTS_SELECTOR;
     let mut out = Vec::with_capacity(4 + 32 * (3 + statement_ids.len()));
     out.extend_from_slice(&selector);
     out.extend_from_slice(aggregation_vkey_hash.as_slice());
@@ -109,6 +106,14 @@ mod tests {
         assert_eq!(&data[100..132], ids[0].as_slice());
         assert_eq!(&data[132..164], ids[1].as_slice());
         assert_eq!(data.len(), 164);
+    }
+
+    #[test]
+    fn verify_statements_selector_matches_signature() {
+        assert_eq!(
+            VERIFY_STATEMENTS_SELECTOR,
+            keccak256("verifyStatements(bytes32,bytes32[])")[..4]
+        );
     }
 
     #[test]

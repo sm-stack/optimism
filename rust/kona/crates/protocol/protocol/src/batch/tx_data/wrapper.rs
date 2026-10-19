@@ -39,27 +39,9 @@ impl Decodable for SpanBatchPostExecTransactionData {
     }
 }
 
-/// Proof aggregate (`0x7C`) transaction data within a span batch: the RLP-encoded payload, the same
-/// layout as [`SpanBatchPostExecTransactionData`].
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct SpanBatchProofAggregateTransactionData {
-    /// RLP-encoded proof aggregate payload bytes.
-    pub data: Bytes,
-}
-
-impl Encodable for SpanBatchProofAggregateTransactionData {
-    fn encode(&self, out: &mut dyn alloy_rlp::BufMut) {
-        out.put_slice(self.data.as_ref());
-    }
-}
-
-impl Decodable for SpanBatchProofAggregateTransactionData {
-    fn decode(r: &mut &[u8]) -> Result<Self, alloy_rlp::Error> {
-        let SpanBatchPostExecTransactionData { data } =
-            SpanBatchPostExecTransactionData::decode(r)?;
-        Ok(Self { data })
-    }
-}
+/// Proof aggregate (`0x7C`) transaction data within a span batch: the RLP-encoded payload, with
+/// the same layout as a `PostExec` transaction's.
+pub type SpanBatchProofAggregateTransactionData = SpanBatchPostExecTransactionData;
 
 /// The typed transaction data for a transaction within a span batch.
 #[derive(Debug, Clone, PartialEq, Eq)]

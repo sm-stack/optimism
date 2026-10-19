@@ -17,7 +17,7 @@ fn logging_registry(ack: [u8; 4]) -> Vec<u8> {
 }
 
 fn acking_registry() -> Vec<u8> {
-    logging_registry(crate::proof_aggregate::verify_statements_selector())
+    logging_registry(crate::proof_aggregate::VERIFY_STATEMENTS_SELECTOR)
 }
 
 /// Registry stand-in that always reverts.
