@@ -36,6 +36,19 @@
 //!   and a payload that never becomes canonical still counts, which only delays the next aggregate.
 //!
 //! Smaller proofs are the lasting fix; a WHIR-based proof would be roughly a fifth of the size.
+//!
+//! # Proving cost
+//!
+//! Every proof program verifies an aggregate's proof in software: about 0.8B Cannon steps, and
+//! 582M PGU in the kona-sp1 super-range guest. The registry call adds up to about 0.46B PGU at its
+//! 30M system call gas. A ZK range proof covers every block of its span, so its cost grows with
+//! how many of them carry an aggregate, and consensus allows one in every block: the interval and
+//! the [`MAX_AGGREGATE_STATEMENTS`] limit bind only an honest sequencer. Against a sequencer that
+//! fills every block, a range request stays within its 2×10¹¹ PGU limit only for a single chain:
+//! at the default 16-way split that holds for 2 s blocks (about 59%), while 1 s blocks need a
+//! split of at least 32. Each further chain proven in the same super root adds its blocks to the
+//! same request, so adding chains to the dependency set needs a consensus rate limit or an
+//! adaptive split first.
 
 use alloy_primitives::B256;
 pub use op_alloy_consensus::{PendingAggregate, StatementProof};
@@ -63,6 +76,11 @@ pub const MAX_PUBLIC_VALUES_BYTES: usize = 64 * 1024;
 /// Upper bound on an encoded `SP1VerifyingKey`, which is about 100 bytes.
 pub const MAX_VERIFYING_KEY_BYTES: usize = 4 * 1024;
 
+/// Upper bound on the statements one aggregate may cover. Consensus allows more, up to what the
+/// registry call's 30M system call gas can process (about 4,600); the sequencer keeps aggregates
+/// small so their registry call stays cheap to prove.
+pub const MAX_AGGREGATE_STATEMENTS: usize = 512;
+
 /// Upper bound on aggregates waiting for inclusion.
 pub const MAX_PENDING_AGGREGATES: usize = 16;
 
@@ -83,6 +101,9 @@ pub enum ProofAggregationPoolError {
     /// The pool already holds [`MAX_STATEMENT_PROOFS`] statement proofs.
     #[error("statement proof pool is full")]
     StatementProofsFull,
+    /// The aggregate covers more than [`MAX_AGGREGATE_STATEMENTS`] statements.
+    #[error("aggregate covers more than {MAX_AGGREGATE_STATEMENTS} statements")]
+    TooManyStatements,
     /// The pool already holds [`MAX_PENDING_AGGREGATES`] aggregates.
     #[error("pending aggregate queue is full")]
     AggregatesFull,
@@ -205,6 +226,9 @@ impl ProofAggregationPool {
         &self,
         aggregate: PendingAggregate,
     ) -> Result<(), ProofAggregationPoolError> {
+        if aggregate.statements.len() > MAX_AGGREGATE_STATEMENTS {
+            return Err(ProofAggregationPoolError::TooManyStatements);
+        }
         let mut inner = self.lock();
         if inner.aggregates.len() >= MAX_PENDING_AGGREGATES {
             return Err(ProofAggregationPoolError::AggregatesFull);
@@ -317,6 +341,21 @@ mod tests {
         pool.discard_aggregate(&aggregate);
         assert_eq!(pool.next_aggregate(), None);
         assert_eq!(pool.lock().held_proofs(), 1);
+    }
+
+    #[test]
+    fn rejects_an_aggregate_over_the_statement_limit() {
+        let pool = ProofAggregationPool::default();
+        let aggregate = PendingAggregate {
+            aggregation_vkey_hash: B256::ZERO,
+            statements: vec![ProofStatement::default(); MAX_AGGREGATE_STATEMENTS + 1],
+            proof: Bytes::new(),
+        };
+        assert_eq!(
+            pool.submit_aggregate(aggregate),
+            Err(ProofAggregationPoolError::TooManyStatements)
+        );
+        assert_eq!(pool.pending_aggregates(), 0);
     }
 
     #[test]

@@ -75,6 +75,7 @@ upgrade.
 | One EIP-2935 header lookup step | 330K PGU and 7.2 KB of witness. The first lookup to the far end of a 7-day window at 1 s blocks takes about 74 steps. |
 | One Merkle opening | 46K PGU (depth 12) to 63K PGU (depth 17) |
 | In-guest `verify_sp1_proof` | 84K PGU per call, plus about 1.1M PGU once. Each deferred proof also adds about 1.1M PGU-equivalent of recursion work. The PGU count does not include it. |
+| Software verification of one SP1 compressed proof (`op-sp1-proofs`, a proof aggregate `0x7C` transaction) | 581.6M PGU, 612M instructions, for a 1.27 MB proof. Consensus allows one per block; only the sequencer can include it. |
 
 Estimate first: multiply the unit costs by the worst-case input counts. Measure with the SP1
 executor only when the estimate is within 10× of a limit and the run is allowed (see "Untrusted

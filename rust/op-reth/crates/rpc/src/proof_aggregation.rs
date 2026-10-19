@@ -26,8 +26,8 @@ use jsonrpsee::{
 use op_alloy_consensus::{ProofStatement, statements_commitment};
 use op_sp1_proofs::Sp1ProofAggregateVerifier;
 use reth_optimism_payload_builder::proof_aggregation::{
-    MAX_PROOF_BYTES, PendingAggregate, ProofAggregationPool, ProofAggregationPoolError,
-    StatementProof,
+    MAX_AGGREGATE_STATEMENTS, MAX_PROOF_BYTES, PendingAggregate, ProofAggregationPool,
+    ProofAggregationPoolError, StatementProof,
 };
 use reth_storage_api::StateProviderFactory;
 use sha2::{Digest, Sha256};
@@ -176,9 +176,9 @@ fn pool_error(err: ProofAggregationPoolError) -> ErrorObjectOwned {
     match err {
         ProofAggregationPoolError::StatementProofsFull |
         ProofAggregationPoolError::AggregatesFull => busy(err.to_string()),
-        ProofAggregationPoolError::TooLarge { .. } | ProofAggregationPoolError::AlreadyQueued => {
-            invalid_params(err.to_string())
-        }
+        ProofAggregationPoolError::TooLarge { .. } |
+        ProofAggregationPoolError::AlreadyQueued |
+        ProofAggregationPoolError::TooManyStatements => invalid_params(err.to_string()),
     }
 }
 
@@ -255,6 +255,9 @@ where
     async fn submit_proof_aggregate(&self, aggregate: PendingAggregate) -> RpcResult<()> {
         if aggregate.statements.is_empty() {
             return Err(invalid_params(String::from("aggregate covers no statements")));
+        }
+        if aggregate.statements.len() > MAX_AGGREGATE_STATEMENTS {
+            return Err(pool_error(ProofAggregationPoolError::TooManyStatements));
         }
         if aggregate.proof.len() > MAX_PROOF_BYTES {
             return Err(pool_error(ProofAggregationPoolError::TooLarge {
@@ -427,6 +430,11 @@ mod tests {
         };
 
         assert!(rejection(vec![]).await.contains("no statements"));
+        assert!(
+            rejection(vec![pending; MAX_AGGREGATE_STATEMENTS + 1])
+                .await
+                .contains("more than 512 statements")
+        );
         assert!(rejection(vec![pending, pending]).await.contains("twice"));
         assert!(rejection(vec![pending, statement(b"other")]).await.contains("not pending"));
         assert!(rejection(vec![pending]).await.contains("proof rejected"));
