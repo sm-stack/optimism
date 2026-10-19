@@ -42,7 +42,9 @@ use reth_node_builder::{
 use reth_node_core::args::RpcStateCacheArgs;
 use reth_optimism_chainspec::{OpChainSpec, OpHardfork};
 use reth_optimism_consensus::OpBeaconConsensus;
-use reth_optimism_evm::{ConfigurePostExecEvm, OpEvmConfig, OpRethReceiptBuilder};
+use reth_optimism_evm::{
+    ConfigurePostExecEvm, OpEvmConfig, OpRethReceiptBuilder, SharedProofAggregateVerifier,
+};
 use reth_optimism_exex::OpProofsExEx;
 use reth_optimism_forks::OpHardforks;
 use reth_optimism_payload_builder::{
@@ -1376,10 +1378,14 @@ where
 
     async fn build_evm(self, ctx: &BuilderContext<Node>) -> eyre::Result<Self::EVM> {
         Ok(OpEvmConfig::new(ctx.chain_spec(), OpRethReceiptBuilder::default())
-            .with_proof_aggregate_verifier(Some(Arc::new(
-                op_sp1_proofs::Sp1ProofAggregateVerifier::new(),
-            ))))
+            .with_proof_aggregate_verifier(Some(proof_aggregate_verifier())))
     }
+}
+
+/// The verifier for proof aggregate transactions that every op-reth EVM configuration must
+/// install: without one, the executor rejects any block carrying a proof aggregate.
+pub fn proof_aggregate_verifier() -> SharedProofAggregateVerifier {
+    Arc::new(op_sp1_proofs::Sp1ProofAggregateVerifier::new())
 }
 
 /// Wraps the [`OpTransactionValidator`] built by [`OpPoolBuilder`] into the final validator used by

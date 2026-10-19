@@ -7,7 +7,7 @@ use reth_node_core::args::{OtlpInitStatus, OtlpLogsStatus};
 use reth_node_metrics::recorder::install_prometheus_recorder;
 use reth_optimism_chainspec::OpChainSpec;
 use reth_optimism_consensus::OpBeaconConsensus;
-use reth_optimism_node::{OpExecutorProvider, OpNode};
+use reth_optimism_node::{OpExecutorProvider, OpNode, proof_aggregate_verifier};
 use reth_rpc_server_types::RpcModuleValidator;
 use reth_tracing::{Layers, TracingGuards};
 use std::{fmt, sync::Arc};
@@ -73,7 +73,11 @@ where
         }
 
         let components = |spec: Arc<OpChainSpec>| {
-            (OpExecutorProvider::optimism(spec.clone()), Arc::new(OpBeaconConsensus::new(spec)))
+            (
+                OpExecutorProvider::optimism(spec.clone())
+                    .with_proof_aggregate_verifier(Some(proof_aggregate_verifier())),
+                Arc::new(OpBeaconConsensus::new(spec)),
+            )
         };
 
         match self.cli.command {

@@ -617,7 +617,10 @@ impl HintHandler for InteropHintHandler {
                             OpEvmFactory::<alloy_op_evm::OpTx>::default(),
                             alloy_op_evm::block::OpAlloyReceiptBuilder::default(),
                             None,
-                        );
+                        )
+                        .with_proof_aggregate_verifier(Some(Arc::new(
+                            op_sp1_proofs::Sp1ProofAggregateVerifier::new(),
+                        )));
                         let mut driver = Driver::new(cursor, executor, pipeline);
 
                         driver

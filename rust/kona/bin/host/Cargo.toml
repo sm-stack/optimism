@@ -49,6 +49,7 @@ alloy-primitives = { workspace = true, features = ["serde"] }
 op-alloy-rpc-types-engine = { workspace = true, features = ["serde"] }
 op-alloy-network.workspace = true
 alloy-op-evm = { workspace = true, features = ["std"] }
+op-sp1-proofs.workspace = true
 
 # Revm
 revm = { workspace = true, features = ["std", "c-kzg", "secp256k1", "portable", "blst"] }

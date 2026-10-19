@@ -103,7 +103,8 @@ where
             PostExecEvmFactoryAdapter::new(OpEvmFactory::new(FixedRefundPolicyFactory::new(
                 excessive_refund_target,
             ))),
-        );
+        )
+        .with_proof_aggregate_verifier(Some(crate::proof_aggregate_verifier()));
         BasicPayloadServiceBuilder::new(payload_builder)
             .spawn_payload_builder_service(ctx, pool, evm_config)
             .await

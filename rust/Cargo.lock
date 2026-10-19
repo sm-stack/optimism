@@ -7502,6 +7502,7 @@ dependencies = [
  "op-alloy-network",
  "op-alloy-rpc-types-engine",
  "op-revm",
+ "op-sp1-proofs",
  "proptest",
  "revm",
  "rocksdb",
