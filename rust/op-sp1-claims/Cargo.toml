@@ -1,0 +1,21 @@
+[package]
+name = "op-sp1-claims"
+description = "SP1 claim aggregate proof verification for OP Stack execution"
+version = "0.1.0"
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+publish = false
+
+[lints]
+workspace = true
+
+[dependencies]
+alloy-op-evm.workspace = true
+alloy-primitives.workspace = true
+bincode = { workspace = true, features = ["alloc", "serde"] }
+slop-algebra.workspace = true
+sp1-primitives.workspace = true
+sp1-verifier.workspace = true

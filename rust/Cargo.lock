@@ -7222,6 +7222,7 @@ dependencies = [
  "op-alloy-consensus",
  "op-alloy-rpc-types-engine",
  "op-revm",
+ "op-sp1-claims",
  "revm",
  "serde",
  "serde_json",
@@ -8184,6 +8185,7 @@ dependencies = [
  "async-trait",
  "buddy_system_allocator",
  "cfg-if",
+ "getrandom 0.2.17",
  "kona-preimage",
  "thiserror 2.0.18",
  "tracing",
@@ -9959,6 +9961,18 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2 0.10.9",
+]
+
+[[package]]
+name = "op-sp1-claims"
+version = "0.1.0"
+dependencies = [
+ "alloy-op-evm",
+ "alloy-primitives",
+ "bincode 2.0.1",
+ "slop-algebra",
+ "sp1-primitives",
+ "sp1-verifier",
 ]
 
 [[package]]
@@ -13996,6 +14010,7 @@ dependencies = [
  "op-alloy-network",
  "op-alloy-rpc-types-engine",
  "op-revm",
+ "op-sp1-claims",
  "reth-chain-state",
  "reth-chainspec",
  "reth-consensus",

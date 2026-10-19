@@ -148,7 +148,8 @@ where
         evm_factory,
         OpAlloyReceiptBuilder::default(),
         None,
-    );
+    )
+    .with_claim_aggregate_verifier(Some(Arc::new(op_sp1_claims::Sp1ClaimAggregateVerifier::new())));
     let mut driver = Driver::new(cursor, executor, pipeline);
 
     // Run the derivation pipeline until we are able to produce the output root of the claimed

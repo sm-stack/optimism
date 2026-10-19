@@ -48,6 +48,14 @@ fn unsupported(name: &str) -> ! {
     io::exit(3)
 }
 
+/// Answers getrandom 0.2 requests with zeroes; fault proof execution has no entropy source.
+#[allow(clippy::unnecessary_wraps)]
+fn zero_getrandom(buf: &mut [u8]) -> Result<(), getrandom::Error> {
+    buf.fill(0);
+    Ok(())
+}
+getrandom::register_custom_getrandom!(zero_getrandom);
+
 #[unsafe(no_mangle)]
 extern "C" fn sys_halt() {
     io::exit(0)

@@ -1314,7 +1314,10 @@ where
         OpEvmConfig<<Node::Types as NodeTypes>::ChainSpec, <Node::Types as NodeTypes>::Primitives>;
 
     async fn build_evm(self, ctx: &BuilderContext<Node>) -> eyre::Result<Self::EVM> {
-        Ok(OpEvmConfig::new(ctx.chain_spec(), OpRethReceiptBuilder::default()))
+        Ok(OpEvmConfig::new(ctx.chain_spec(), OpRethReceiptBuilder::default())
+            .with_claim_aggregate_verifier(Some(Arc::new(
+                op_sp1_claims::Sp1ClaimAggregateVerifier::new(),
+            ))))
     }
 }
 

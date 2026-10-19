@@ -57,6 +57,9 @@ members = [
   # Alloy OP EVM
   "alloy-op-evm/",
 
+  # SP1 claim aggregate verification
+  "op-sp1-claims/",
+
   # Alloy OP Hardforks
   "alloy-op-hardforks/",
 
@@ -347,6 +350,7 @@ op-alloy-rpc-jsonrpsee = { version = "2.0.0", path = "op-alloy/crates/rpc-jsonrp
 
 # ==================== ALLOY-OP-EVM / ALLOY-OP-HARDFORKS ====================
 alloy-op-evm = { version = "0.32.0", path = "alloy-op-evm/", default-features = false }
+op-sp1-claims = { path = "op-sp1-claims/" }
 alloy-op-hardforks = { version = "0.5.0", path = "alloy-op-hardforks/", default-features = false }
 
 # ==================== RETH CRATES (crates.io) ====================
@@ -508,6 +512,8 @@ sp1-sdk = { version = "6.8.1", default-features = false, features = [
   "network",
 ] }
 sp1-verifier = { version = "6.8.1", default-features = false, features = ["full"] }
+sp1-primitives = { version = "6.8.1", default-features = false }
+slop-algebra = { version = "6.8.1", default-features = false }
 
 # ==================== ASYNC ====================
 async-channel = "2.5"
