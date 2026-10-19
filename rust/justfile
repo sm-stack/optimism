@@ -638,16 +638,20 @@ docs-preview:
 ######################### Kona Prestates ##############################
 
 KONA_DIR := justfile_directory() / "kona"
-MIPS64_TARGET_SPEC := justfile_directory() / "kona/docker/cannon/mips64-unknown-none.json"
-MIPS64_ELF_DIR := justfile_directory() / "target/mips64-unknown-none/release-client-lto"
+# The client programs declare `os = "zkvm"` so `-Zbuild-std=std` builds std's zkvm platform
+# layer, whose `sys_*` hooks kona-std-fpvm implements on the FPVM kernel. This lets the
+# programs depend on std-only crates.
+MIPS64_TARGET_SPEC := justfile_directory() / "kona/docker/cannon/mips64-unknown-zkvm.json"
+MIPS64_ELF_DIR := justfile_directory() / "target/mips64-unknown-zkvm/release-client-lto"
+MIPS64_BUILD_STD := "-Zbuild-std=std,panic_abort -Zbuild-std-features=compiler-builtins-mem"
 
 # MIPS64 cross toolchain for the cannon target. The defaults are Debian's
 # g++-mips64-linux-gnuabi64 names; each reads from the same environment variable
 # the build exports, so a differently named toolchain is both probed for and
 # used, instead of the probe passing on a name the build then ignores.
-MIPS64_CC := env('CC_mips64_unknown_none', 'mips64-linux-gnuabi64-gcc')
-MIPS64_CXX := env('CXX_mips64_unknown_none', 'mips64-linux-gnuabi64-g++')
-MIPS64_LINKER := env('CARGO_TARGET_MIPS64_UNKNOWN_NONE_LINKER', 'mips64-linux-gnuabi64-gcc')
+MIPS64_CC := env('CC_mips64_unknown_zkvm', 'mips64-linux-gnuabi64-gcc')
+MIPS64_CXX := env('CXX_mips64_unknown_zkvm', 'mips64-linux-gnuabi64-g++')
+MIPS64_LINKER := env('CARGO_TARGET_MIPS64_UNKNOWN_ZKVM_LINKER', 'mips64-linux-gnuabi64-gcc')
 
 # Prestate variants, as `<cargo bin>:<artifacts dir>` pairs. The build side
 # derives everything from this; the artifacts dir names are additionally
@@ -706,7 +710,7 @@ build-kona-client-elfs:
       echo "kona-client is cross-compiled to the cannon MIPS64 target, which needs a" >&2
       echo "MIPS64 GCC toolchain. It is apt-only; no macOS package provides it:" >&2
       echo "  sudo apt install g++-mips64-linux-gnuabi64 libc6-dev-mips64-cross binutils-mips64-linux-gnuabi64" >&2
-      echo "Set CARGO_TARGET_MIPS64_UNKNOWN_NONE_LINKER if your toolchain is named differently." >&2
+      echo "Set CARGO_TARGET_MIPS64_UNKNOWN_ZKVM_LINKER if your toolchain is named differently." >&2
       echo "" >&2
       echo "Or build the prestates in Docker, which needs no host toolchain:" >&2
       echo "  just cannon-prestates            # from the repo root; picks Docker when the linker is missing" >&2
@@ -718,9 +722,9 @@ build-kona-client-elfs:
     just install-nightly
 
     # Cross-compilation environment
-    export CC_mips64_unknown_none="{{MIPS64_CC}}"
-    export CXX_mips64_unknown_none="{{MIPS64_CXX}}"
-    export CARGO_TARGET_MIPS64_UNKNOWN_NONE_LINKER="{{MIPS64_LINKER}}"
+    export CC_mips64_unknown_zkvm="{{MIPS64_CC}}"
+    export CXX_mips64_unknown_zkvm="{{MIPS64_CXX}}"
+    export CARGO_TARGET_MIPS64_UNKNOWN_ZKVM_LINKER="{{MIPS64_LINKER}}"
     export RUSTFLAGS="-Clink-arg=-e_start -Cllvm-args=-mno-check-zero-division"
     export CARGO_BUILD_TARGET="{{MIPS64_TARGET_SPEC}}"
     export RUSTUP_TOOLCHAIN="{{NIGHTLY}}"
@@ -732,7 +736,7 @@ build-kona-client-elfs:
 
     echo "Building kona-client ELFs"
     cargo build \
-      -Zbuild-std=core,alloc \
+      {{MIPS64_BUILD_STD}} \
       -Zjson-target-spec \
       -p kona-client \
       "${bins[@]}" \
@@ -760,14 +764,14 @@ lint-kona-cannon:
 
     just install-nightly
 
-    export CC_mips64_unknown_none="{{MIPS64_CC}}"
-    export CXX_mips64_unknown_none="{{MIPS64_CXX}}"
-    export CARGO_TARGET_MIPS64_UNKNOWN_NONE_LINKER="{{MIPS64_LINKER}}"
+    export CC_mips64_unknown_zkvm="{{MIPS64_CC}}"
+    export CXX_mips64_unknown_zkvm="{{MIPS64_CXX}}"
+    export CARGO_TARGET_MIPS64_UNKNOWN_ZKVM_LINKER="{{MIPS64_LINKER}}"
     export RUSTFLAGS="-Clink-arg=-e_start -Cllvm-args=-mno-check-zero-division"
     export CARGO_BUILD_TARGET="{{MIPS64_TARGET_SPEC}}"
     export RUSTUP_TOOLCHAIN="{{NIGHTLY}}"
 
-    cargo clippy -p kona-std-fpvm --all-features -Zbuild-std=core,alloc -Zjson-target-spec -- -D warnings
+    cargo clippy -p kona-std-fpvm --all-features {{MIPS64_BUILD_STD}} -Zjson-target-spec -- -D warnings
 
 # Build all kona prestates natively. Use build-kona-reproducible-prestate for
 # a hash that matches CI and release builds.
