@@ -41,6 +41,22 @@ func RunSingleChainSuperFaultProofSDMSmokeTest(t devtest.T, sys *presets.SingleC
 	runSingleChainSuperFaultProofSmokeTest(t, sys, prepareSDMSingleChainTarget, runners...)
 }
 
+// RunSingleChainSuperFaultProofSmokeTestAt runs the single-chain smoke test with the disputed
+// block chosen by prepareTarget, which produces it on the stalled chain and returns its number.
+// Tests outside this package use it to prove blocks carrying their own transaction types.
+func RunSingleChainSuperFaultProofSmokeTestAt(
+	t devtest.T,
+	sys *presets.SingleChainInterop,
+	prepareTarget func(t devtest.T, sys *presets.SingleChainInterop) uint64,
+	runners ...ProofRunner,
+) {
+	runSingleChainSuperFaultProofSmokeTest(t, sys, func(t devtest.T, sys *presets.SingleChainInterop, c *chain, _ []*chain) (uint64, uint64, uint64) {
+		targetBlock := prepareTarget(t, sys)
+		endTimestamp := c.Cfg.TimestampForBlock(targetBlock)
+		return endTimestamp - 1, endTimestamp, targetBlock
+	}, runners...)
+}
+
 type singleChainTargetFn func(t devtest.T, sys *presets.SingleChainInterop, c *chain, chains []*chain) (startTimestamp uint64, endTimestamp uint64, targetBlock uint64)
 
 func runSingleChainSuperFaultProofSmokeTest(

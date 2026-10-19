@@ -2,6 +2,7 @@ package superfaultproofs
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"math/big"
 	"math/rand"
@@ -27,6 +28,7 @@ import (
 
 	safety "github.com/ethereum-optimism/optimism/op-service/eth/safety"
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/common/hexutil"
 	"github.com/ethereum/go-ethereum/crypto"
 )
 
@@ -294,6 +296,39 @@ func latestRequiredL1(resp eth.SuperRootAtTimestampResponse) eth.BlockID {
 }
 
 // runKonaInteropProgram runs the kona interop fault proof program and checks the result.
+// keepWitnessDirEnv optionally names a directory where each kona interop run keeps its preimages
+// and inputs, so the same transition can be replayed offline on Cannon with the MIPS client.
+const keepWitnessDirEnv = "SUPERFAULTPROOFS_WITNESS_DIR"
+
+// keepWitness points the run's preimage store at a per-test directory under dir and records the
+// inputs an offline `kona-host super --server` replay needs next to it. The chain config files
+// the arguments name live in test temp dirs, so they are copied there and the arguments rewritten.
+func keepWitness(t devtest.T, dir string, argv []string, inputs utils.LocalGameInputs) []string {
+	runDir := filepath.Join(dir, strings.NewReplacer("/", "_", " ", "_").Replace(t.Name()))
+	t.Require().NoError(os.MkdirAll(runDir, 0o755))
+	argv = slices.Clone(argv)
+	for i := 1; i < len(argv); i++ {
+		switch argv[i-1] {
+		case "--rollup-config-paths", "--l1-config-path", "--depset-cfg":
+			data, err := os.ReadFile(argv[i])
+			t.Require().NoError(err, "read %s", argv[i])
+			kept := filepath.Join(runDir, filepath.Base(argv[i]))
+			t.Require().NoError(os.WriteFile(kept, data, 0o644))
+			argv[i] = kept
+		}
+	}
+	replay, err := json.MarshalIndent(map[string]any{
+		"l1Head":         inputs.L1Head,
+		"agreedPreState": hexutil.Bytes(inputs.AgreedPreState),
+		"claim":          inputs.L2Claim,
+		"claimTimestamp": bigs.Uint64Strict(inputs.L2SequenceNumber),
+		"args":           argv,
+	}, "", "  ")
+	t.Require().NoError(err)
+	t.Require().NoError(os.WriteFile(filepath.Join(runDir, "inputs.json"), replay, 0o644))
+	return append(argv, "--data-dir", filepath.Join(runDir, "preimages"))
+}
+
 func runKonaInteropProgram(t devtest.T, cfg vm.Config, l1Head common.Hash, agreedPreState []byte, l2Claim common.Hash, claimTimestamp uint64, expectValid bool) {
 	tmpDir := t.TempDir()
 	inputs := utils.LocalGameInputs{
@@ -305,6 +340,9 @@ func runKonaInteropProgram(t devtest.T, cfg vm.Config, l1Head common.Hash, agree
 
 	argv, err := vm.NewNativeKonaSuperExecutor().OracleCommand(cfg, tmpDir, inputs)
 	t.Require().NoError(err)
+	if dir := os.Getenv(keepWitnessDirEnv); dir != "" {
+		argv = keepWitness(t, dir, argv, inputs)
+	}
 
 	exePath, err := filepath.Abs(argv[0])
 	t.Require().NoError(err)

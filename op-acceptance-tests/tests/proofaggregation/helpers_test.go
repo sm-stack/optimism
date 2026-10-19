@@ -53,12 +53,20 @@ func callRegistry(t devtest.T, el *dsl.L2ELNode, method string, args ...any) any
 	return values[0]
 }
 
+// chain is the part of a devstack system the proof aggregation flow drives: the sequencer's EL,
+// a funder on it, and the network for its keys.
+type chain struct {
+	EL      *dsl.L2ELNode
+	Funder  *dsl.FunderEOA
+	Network *dsl.L2Network
+}
+
 // configureRegistry has the L2 ProxyAdmin owner set the aggregation program and the blob gas
 // each statement pays for.
-func configureRegistry(t devtest.T, sys *sdmtest.RethSystem, aggregationVkeyHash common.Hash, blobGasPerStatement uint64) {
-	priv := sys.L2Network.Escape().Keys().Secret(devkeys.L2ProxyAdminOwnerRole.Key(sys.L2Network.ChainID().ToBig()))
-	owner := dsl.NewKey(t, priv).User(sys.L2EL)
-	sys.FunderL2.Fund(owner, eth.OneEther)
+func configureRegistry(t devtest.T, c chain, aggregationVkeyHash common.Hash, blobGasPerStatement uint64) {
+	priv := c.Network.Escape().Keys().Secret(devkeys.L2ProxyAdminOwnerRole.Key(c.Network.ChainID().ToBig()))
+	owner := dsl.NewKey(t, priv).User(c.EL)
+	c.Funder.Fund(owner, eth.OneEther)
 
 	owner.Transact(owner.Plan(), txplan.WithTo(&proofRegistry),
 		txplan.WithData(pack(t, "setAggregationVkeyHash", aggregationVkeyHash)))
@@ -67,8 +75,8 @@ func configureRegistry(t devtest.T, sys *sdmtest.RethSystem, aggregationVkeyHash
 }
 
 // submitStatement registers the fixture's statement on chain, paying the current fee.
-func submitStatement(t devtest.T, sys *sdmtest.RethSystem, user *dsl.EOA, f fixture) {
-	fee := callRegistry(t, sys.L2EL, "statementFee").(*big.Int)
+func submitStatement(t devtest.T, c chain, user *dsl.EOA, f fixture) {
+	fee := callRegistry(t, c.EL, "statementFee").(*big.Int)
 	t.Require().Positive(fee.Sign(), "configured registry charges a fee")
 	user.Transact(user.Plan(), txplan.WithTo(&proofRegistry),
 		txplan.WithValue(eth.WeiBig(fee)),
