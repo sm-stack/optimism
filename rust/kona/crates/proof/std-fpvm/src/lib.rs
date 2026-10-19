@@ -6,6 +6,7 @@
 )]
 #![cfg_attr(docsrs, feature(doc_cfg))]
 #![cfg_attr(target_arch = "mips64", feature(asm_experimental_arch))]
+#![cfg_attr(target_os = "zkvm", feature(alloc_error_hook))]
 #![cfg_attr(any(target_arch = "mips64", target_arch = "riscv64"), no_std)]
 
 extern crate alloc;

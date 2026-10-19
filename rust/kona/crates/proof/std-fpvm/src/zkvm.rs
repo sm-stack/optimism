@@ -5,7 +5,8 @@
 //! interface, so dependencies that require `std` can run inside the FPVM.
 //!
 //! Every service is deterministic, as fault proof execution must be: there is no entropy source,
-//! clock, environment, or argument list. Randomness requests are answered with zeroes.
+//! clock, environment, or argument list. std's own randomness requests (`sys_rand`, which seeds
+//! `HashMap`) are answered with zeroes; getrandom requests from dependencies fail.
 
 extern crate std;
 
@@ -23,11 +24,22 @@ const STDERR_FD: u32 = 2;
 
 /// Installs a panic hook that reports the panic on stderr and exits with code 2, matching the
 /// `#[panic_handler]` that `client_entry` installs for `no_std` builds.
+///
+/// Also installs an allocation error hook that exits the same way. Without it, std's default
+/// handler aborts, which compiles to a MIPS `break` that the FPVM cannot prove; the `no_std` build
+/// turns an allocation failure into a panic instead.
 pub fn install_panic_hook() {
     std::panic::set_hook(Box::new(|info| {
         io::print_err(&format!("Panic: {info}"));
         io::exit(2)
     }));
+    std::alloc::set_alloc_error_hook(alloc_error);
+}
+
+/// Reports an allocation failure and exits with code 2. It must not allocate.
+fn alloc_error(_layout: Layout) {
+    io::print_err("Panic: memory allocation failed\n");
+    io::exit(2)
 }
 
 /// Borrows `len` bytes at `ptr`, treating a zero length as empty regardless of `ptr`.
@@ -48,13 +60,12 @@ fn unsupported(name: &str) -> ! {
     io::exit(3)
 }
 
-/// Answers getrandom 0.2 requests with zeroes; fault proof execution has no entropy source.
-#[allow(clippy::unnecessary_wraps)]
-fn zero_getrandom(buf: &mut [u8]) -> Result<(), getrandom::Error> {
-    buf.fill(0);
-    Ok(())
+/// Fails every getrandom 0.2 request: fault proof execution has no entropy source, and a
+/// dependency that needs real entropy must fail visibly rather than run on predictable bytes.
+const fn unsupported_getrandom(_buf: &mut [u8]) -> Result<(), getrandom::Error> {
+    Err(getrandom::Error::UNSUPPORTED)
 }
-getrandom::register_custom_getrandom!(zero_getrandom);
+getrandom::register_custom_getrandom!(unsupported_getrandom);
 
 #[unsafe(no_mangle)]
 extern "C" fn sys_halt() {
@@ -144,7 +155,10 @@ const extern "C" fn sys_argv(_out_words: *mut u32, _out_nwords: usize, _arg_inde
 
 #[unsafe(no_mangle)]
 extern "C" fn sys_alloc_words(nwords: usize) -> *mut u32 {
-    sys_alloc_aligned(nwords * 4, 4).cast()
+    let Some(nbytes) = nwords.checked_mul(4) else {
+        unsupported("sys_alloc_words with an overflowing size")
+    };
+    sys_alloc_aligned(nbytes, 4).cast()
 }
 
 /// Backs `std::alloc::System`. Allocations go through the global allocator, which the client
