@@ -16,6 +16,11 @@ pub const PROOF_REGISTRY_ADDRESS: Address = address!("0x420000000000000000000000
 /// Caller of the registry's `verifyStatements`: the system address used for system calls.
 pub const PROOF_AGGREGATE_SYSTEM_CALLER: Address = alloy_eips::eip4788::SYSTEM_ADDRESS;
 
+/// Upper bound on the proof a proof aggregate transaction carries. An SP1 compressed proof has a
+/// fixed shape of about 1.27 MB; anything larger is invalid without being decoded, which bounds the
+/// verification work a block can demand of every node and of the proof programs.
+pub const MAX_PROOF_AGGREGATE_PROOF_BYTES: usize = 2 * 1024 * 1024;
+
 /// Selector of `ProofRegistry.verifyStatements(bytes32,bytes32[])`.
 pub const VERIFY_STATEMENTS_SELECTOR: [u8; 4] = [0x9a, 0x7b, 0xc4, 0xf1];
 

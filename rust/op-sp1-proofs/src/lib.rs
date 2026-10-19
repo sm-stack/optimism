@@ -10,11 +10,36 @@
 use alloy_op_evm::ProofAggregateVerifier;
 use alloy_primitives::B256;
 use core::fmt;
+use serde::de::DeserializeOwned;
 use slop_algebra::{AbstractField, PrimeField32};
 use sp1_hypercube::{HashableKey, SP1VerifyingKey};
 use sp1_primitives::SP1Field;
 use sp1_verifier::{SP1Proof, compressed::SP1CompressedVerifier};
 use std::sync::OnceLock;
+
+/// Upper bound on the memory a bincode decode may claim for its containers. The encodings are
+/// untrusted: without a bound, a few bytes declaring a huge length make the decoder allocate it
+/// before it finds the bytes missing. An honest compressed proof claims well under this.
+const DECODE_LIMIT: usize = 16 * 1024 * 1024;
+
+/// Upper bound on the chips an aggregate proof opens. The compress machine has 8.
+const MAX_CHIPS: usize = 32;
+
+/// Upper bound on a chip name in an aggregate proof. The verifier absorbs every name byte into its
+/// transcript before it checks the names against the machine.
+const MAX_CHIP_NAME_BYTES: usize = 64;
+
+/// Decodes a legacy bincode encoding of `T` with no trailing bytes, claiming at most
+/// [`DECODE_LIMIT`] bytes for containers.
+pub fn decode_bincode<T: DeserializeOwned>(bytes: &[u8], what: &str) -> Result<T, String> {
+    let config = bincode::config::legacy().with_limit::<DECODE_LIMIT>();
+    let (value, read) = bincode::serde::decode_from_slice(bytes, config)
+        .map_err(|err| format!("malformed {what}: {err}"))?;
+    if read != bytes.len() {
+        return Err(format!("trailing bytes after the {what}"));
+    }
+    Ok(value)
+}
 
 /// Converts a verifying key digest in the statement `vkey_hash` encoding, eight big-endian 32-bit
 /// words, into the `KoalaBear` digest the SP1 verifier compares against.
@@ -57,12 +82,7 @@ pub fn vkey_hash_from_words(words: [u32; 8]) -> B256 {
 /// Recursively verifying a proof inside the aggregation program takes the proven program's full
 /// verifying key, not just its digest, so statement submitters provide it.
 pub fn decode_verifying_key(vk: &[u8], vkey_hash: B256) -> Result<SP1VerifyingKey, String> {
-    let (decoded, read): (SP1VerifyingKey, usize) =
-        bincode::serde::decode_from_slice(vk, bincode::config::legacy())
-            .map_err(|err| format!("malformed verifying key: {err}"))?;
-    if read != vk.len() {
-        return Err(String::from("trailing bytes after the verifying key"));
-    }
+    let decoded: SP1VerifyingKey = decode_bincode(vk, "verifying key")?;
     if vkey_hash_from_words(decoded.hash_u32()) != vkey_hash {
         return Err(String::from("verifying key does not hash to the statement's vkey hash"));
     }
@@ -71,8 +91,7 @@ pub fn decode_verifying_key(vk: &[u8], vkey_hash: B256) -> Result<SP1VerifyingKe
 
 /// Verifies proof aggregate proofs as SP1 compressed proofs.
 pub struct Sp1ProofAggregateVerifier {
-    /// Built on first use: constructing it hashes the recursion verifying key tree, a cost the
-    /// fault proof program must not pay for blocks without a proof aggregate.
+    /// Built on first use, so blocks without a proof aggregate do not pay for it.
     verifier: OnceLock<SP1CompressedVerifier>,
 }
 
@@ -107,15 +126,13 @@ impl Sp1ProofAggregateVerifier {
     ) -> Result<(), String> {
         let vkey = vkey_hash_to_koalabear(vkey_hash)
             .ok_or_else(|| String::from("aggregation vkey hash is not a KoalaBear digest"))?;
-        let (decoded, read): (SP1Proof, usize) =
-            bincode::serde::decode_from_slice(proof, bincode::config::legacy())
-                .map_err(|err| format!("malformed proof: {err}"))?;
-        if read != proof.len() {
-            return Err(String::from("trailing bytes after the proof"));
-        }
-        let SP1Proof::Compressed(proof) = decoded else {
+        let SP1Proof::Compressed(proof) = decode_bincode(proof, "proof")? else {
             return Err(String::from("aggregate proof is not an SP1 compressed proof"));
         };
+        let chips = &proof.proof.opened_values.chips;
+        if chips.len() > MAX_CHIPS || chips.keys().any(|name| name.len() > MAX_CHIP_NAME_BYTES) {
+            return Err(String::from("aggregate proof does not have the compress machine's shape"));
+        }
         self.verifier
             .get_or_init(SP1CompressedVerifier::new)
             .verify_compressed_with_public_values(&proof, public_values, &vkey)
@@ -155,6 +172,28 @@ mod tests {
     fn rejects_non_canonical_vkey_word() {
         let hash = vkey_hash_from_words([0, 0, 0, 0, 0, 0, 0, SP1Field::ORDER_U32]);
         assert!(vkey_hash_to_koalabear(hash).is_none());
+    }
+
+    #[test]
+    fn bounds_allocations_while_decoding() {
+        // A `Vec<u8>` declaring 2^40 bytes. An unbounded decoder allocates them before finding
+        // the input empty.
+        let bytes = (1u64 << 40).to_le_bytes();
+        let err = decode_bincode::<Vec<u8>>(&bytes, "input").unwrap_err();
+        assert!(err.contains("malformed input"), "{err}");
+        let Err(err) = decode_verifying_key(&bytes, B256::ZERO) else {
+            panic!("a truncated verifying key must be rejected")
+        };
+        assert!(err.contains("malformed verifying key"), "{err}");
+    }
+
+    #[test]
+    fn rejects_trailing_bytes() {
+        let mut bytes =
+            bincode::serde::encode_to_vec(vec![1u8, 2], bincode::config::legacy()).unwrap();
+        bytes.push(0);
+        let err = decode_bincode::<Vec<u8>>(&bytes, "input").unwrap_err();
+        assert!(err.contains("trailing bytes"), "{err}");
     }
 
     #[test]

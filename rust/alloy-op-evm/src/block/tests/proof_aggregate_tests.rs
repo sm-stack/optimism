@@ -70,15 +70,17 @@ fn statements() -> Vec<ProofStatement> {
 }
 
 fn aggregate_tx(block_number: u64, statements: Vec<ProofStatement>) -> Recovered<OpTxEnvelope> {
+    aggregate_tx_with_proof(block_number, statements, Bytes::from_static(b"proof"))
+}
+
+fn aggregate_tx_with_proof(
+    block_number: u64,
+    statements: Vec<ProofStatement>,
+    proof: Bytes,
+) -> Recovered<OpTxEnvelope> {
     Recovered::new_unchecked(
         OpTxEnvelope::ProofAggregate(
-            build_proof_aggregate_tx(
-                block_number,
-                AGGREGATION_VKEY,
-                statements,
-                Bytes::from_static(b"proof"),
-            )
-            .seal_slow(),
+            build_proof_aggregate_tx(block_number, AGGREGATION_VKEY, statements, proof).seal_slow(),
         ),
         Address::ZERO,
     )
@@ -409,4 +411,21 @@ fn resumed_executor_keeps_the_prefix_placement_state() {
         resumed(&mut db, &[DEPOSIT_TRANSACTION_TYPE, 0x02]),
         "does not directly follow the deposits",
     );
+}
+
+#[test]
+fn rejects_an_oversized_proof_before_any_other_work() {
+    use crate::proof_aggregate::MAX_PROOF_AGGREGATE_PROOF_BYTES;
+    // A reverting registry: reaching the registry call would report a different error.
+    let mut db = db_with_registry(&REVERTING_REGISTRY);
+    let receipt_builder = OpAlloyReceiptBuilder::default();
+    let hardforks = all_forks_active();
+    let verifier = MockVerifier::new(true);
+    let mut executor = executor(&mut db, &receipt_builder, &hardforks, Some(verifier.clone()));
+    let proof = Bytes::from(vec![0; MAX_PROOF_AGGREGATE_PROOF_BYTES + 1]);
+    assert_invalid(
+        executor.execute_transaction(&aggregate_tx_with_proof(0, statements(), proof)),
+        "above the 2097152 byte limit",
+    );
+    assert!(verifier.calls.lock().unwrap().is_empty());
 }

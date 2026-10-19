@@ -52,9 +52,10 @@ pub const MAX_STATEMENT_PROOFS: usize = 256;
 /// waiting for aggregation.
 pub const MAX_INCLUSION_FAILURES: u32 = 3;
 
-/// Upper bound on an encoded SP1 compressed proof. Compressed proofs have a fixed shape of about
-/// 1.27 MB regardless of the program.
-pub const MAX_PROOF_BYTES: usize = 2 * 1024 * 1024;
+/// Upper bound on an encoded SP1 compressed proof: the consensus limit on a proof aggregate's
+/// proof, applied to statement proofs too. Compressed proofs have a fixed shape of about 1.27 MB
+/// regardless of the program.
+pub const MAX_PROOF_BYTES: usize = alloy_op_evm::MAX_PROOF_AGGREGATE_PROOF_BYTES;
 
 /// Upper bound on a statement's public values.
 pub const MAX_PUBLIC_VALUES_BYTES: usize = 64 * 1024;

@@ -17,10 +17,7 @@ use sp1_sdk::{SP1Proof, SP1Stdin};
 pub const PROOF_AGGREGATION_ELF: &str = "proof-aggregation-elf";
 
 fn decode<T: serde::de::DeserializeOwned>(bytes: &[u8], what: &str) -> Result<T> {
-    let (value, read) = bincode::serde::decode_from_slice(bytes, bincode::config::legacy())
-        .with_context(|| format!("malformed {what}"))?;
-    ensure!(read == bytes.len(), "trailing bytes after the {what}");
-    Ok(value)
+    op_sp1_proofs::decode_bincode(bytes, what).map_err(anyhow::Error::msg)
 }
 
 /// Builds the aggregation guest's stdin: the statement list, then each statement's proof and

@@ -46,8 +46,8 @@ use crate::{
         noop_post_exec_result,
     },
     proof_aggregate::{
-        PROOF_AGGREGATE_SYSTEM_CALLER, PROOF_REGISTRY_ADDRESS, SharedProofAggregateVerifier,
-        is_verify_statements_ack, verify_statements_calldata,
+        MAX_PROOF_AGGREGATE_PROOF_BYTES, PROOF_AGGREGATE_SYSTEM_CALLER, PROOF_REGISTRY_ADDRESS,
+        SharedProofAggregateVerifier, is_verify_statements_ack, verify_statements_calldata,
     },
 };
 
@@ -1141,6 +1141,13 @@ where
             if payload.statements.is_empty() {
                 return Err(Self::invalid_proof_aggregate(format!(
                     "proof aggregate tx at index {tx_index} lists no statements"
+                )));
+            }
+            if payload.proof.len() > MAX_PROOF_AGGREGATE_PROOF_BYTES {
+                return Err(Self::invalid_proof_aggregate(format!(
+                    "proof aggregate tx at index {tx_index} carries a {} byte proof, above the \
+                     {MAX_PROOF_AGGREGATE_PROOF_BYTES} byte limit",
+                    payload.proof.len()
                 )));
             }
             let verifier = self.ctx.proof_aggregate_verifier.clone().ok_or_else(|| {
