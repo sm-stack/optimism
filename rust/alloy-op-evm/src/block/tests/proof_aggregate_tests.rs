@@ -2,6 +2,7 @@ use std::sync::{Arc, Mutex};
 
 use super::*;
 use crate::proof_aggregate::{PROOF_REGISTRY_ADDRESS, ProofAggregateVerifier};
+use alloy_evm::block::CommitChanges;
 use op_alloy::consensus::{OpReceiptEnvelope, ProofStatement, build_proof_aggregate_tx};
 
 /// Registry stand-in that logs its calldata (`LOG0(0, calldatasize)`) and returns `ack` as an
@@ -309,5 +310,103 @@ fn rejects_when_the_registry_reverts() {
     assert_invalid(
         executor.execute_transaction(&aggregate_tx(0, statements())),
         "registry rejected the proof aggregate",
+    );
+}
+
+#[test]
+fn registry_rejection_skips_proof_verification() {
+    let mut db = db_with_registry(&REVERTING_REGISTRY);
+    let receipt_builder = OpAlloyReceiptBuilder::default();
+    let hardforks = all_forks_active();
+    let verifier = MockVerifier::new(true);
+    let mut executor = executor(&mut db, &receipt_builder, &hardforks, Some(verifier.clone()));
+    assert_invalid(
+        executor.execute_transaction(&aggregate_tx(0, statements())),
+        "registry rejected the proof aggregate",
+    );
+    assert!(verifier.calls.lock().unwrap().is_empty(), "the proof must not be verified");
+}
+
+fn user_tx() -> Recovered<OpTxEnvelope> {
+    recovered_legacy(TxLegacy {
+        gas_limit: 50_000,
+        to: TxKind::Call(Address::repeat_byte(0x11)),
+        ..Default::default()
+    })
+}
+
+#[test]
+fn declined_candidates_leave_placement_state_untouched() {
+    let mut db = db_with_registry(&acking_registry());
+    let receipt_builder = OpAlloyReceiptBuilder::default();
+    let hardforks = all_forks_active();
+    let mut executor =
+        executor(&mut db, &receipt_builder, &hardforks, Some(MockVerifier::new(true)));
+
+    // A declined user transaction does not count as preceding the aggregate.
+    let declined = executor
+        .execute_transaction_with_commit_condition(&user_tx(), |_| CommitChanges::No)
+        .expect("user tx executes");
+    assert!(declined.is_none());
+    // Nor does a declined aggregate count as the block's aggregate.
+    let declined = executor
+        .execute_transaction_with_commit_condition(&aggregate_tx(0, statements()), |_| {
+            CommitChanges::No
+        })
+        .expect("aggregate executes");
+    assert!(declined.is_none());
+
+    executor.execute_transaction(&aggregate_tx(0, statements())).expect("aggregate commits");
+    assert!(executor.proof_aggregate_seen);
+    assert!(!executor.non_deposit_tx_seen);
+    executor.execute_transaction(&user_tx()).expect("user tx commits");
+    assert!(executor.non_deposit_tx_seen);
+}
+
+#[test]
+fn executed_prefix_from_tx_types() {
+    use op_alloy::consensus::PROOF_AGGREGATE_TX_TYPE_ID;
+    assert_eq!(ExecutedPrefix::from_tx_types([]), ExecutedPrefix::default());
+    assert_eq!(
+        ExecutedPrefix::from_tx_types([DEPOSIT_TRANSACTION_TYPE, DEPOSIT_TRANSACTION_TYPE]),
+        ExecutedPrefix::default()
+    );
+    assert_eq!(
+        ExecutedPrefix::from_tx_types([DEPOSIT_TRANSACTION_TYPE, PROOF_AGGREGATE_TX_TYPE_ID]),
+        ExecutedPrefix { non_deposit_tx_seen: false, proof_aggregate_seen: true }
+    );
+    assert_eq!(
+        ExecutedPrefix::from_tx_types([DEPOSIT_TRANSACTION_TYPE, 0x02]),
+        ExecutedPrefix { non_deposit_tx_seen: true, proof_aggregate_seen: false }
+    );
+}
+
+#[test]
+fn resumed_executor_keeps_the_prefix_placement_state() {
+    use op_alloy::consensus::PROOF_AGGREGATE_TX_TYPE_ID;
+    let receipt_builder = OpAlloyReceiptBuilder::default();
+    let hardforks = all_forks_active();
+    let resumed = |db, prefix: &[u8]| {
+        let mut executor =
+            executor(db, &receipt_builder, &hardforks, Some(MockVerifier::new(true)));
+        executor
+            .resume_at_tx_index(prefix.len() as u64, ExecutedPrefix::from_tx_types(prefix.to_vec()))
+            .expect("resume");
+        executor.execute_transaction(&aggregate_tx(0, statements()))
+    };
+
+    let mut db = db_with_registry(&acking_registry());
+    resumed(&mut db, &[DEPOSIT_TRANSACTION_TYPE]).expect("aggregate directly after the deposits");
+
+    let mut db = db_with_registry(&acking_registry());
+    assert_invalid(
+        resumed(&mut db, &[DEPOSIT_TRANSACTION_TYPE, PROOF_AGGREGATE_TX_TYPE_ID]),
+        "duplicate",
+    );
+
+    let mut db = db_with_registry(&acking_registry());
+    assert_invalid(
+        resumed(&mut db, &[DEPOSIT_TRANSACTION_TYPE, 0x02]),
+        "does not directly follow the deposits",
     );
 }

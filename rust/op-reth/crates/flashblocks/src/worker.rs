@@ -4,7 +4,7 @@ use crate::{
     tx_cache::{CachedExecutionMeta, TransactionCache},
 };
 use alloy_eips::{
-    BlockNumberOrTag,
+    BlockNumberOrTag, Typed2718,
     eip2718::{Decodable2718, WithEncoded},
 };
 use alloy_primitives::B256;
@@ -19,7 +19,7 @@ use reth_evm::{
     },
 };
 use reth_execution_types::{BlockExecutionOutput, BlockExecutionResult};
-use reth_optimism_evm::{ConfigurePostExecEvm, PostExecExecutorExt, PostExecMode};
+use reth_optimism_evm::{ConfigurePostExecEvm, ExecutedPrefix, PostExecExecutorExt, PostExecMode};
 use reth_optimism_primitives::OpReceipt;
 use reth_primitives_traits::{
     AlloyBlockHeader, BlockTy, HeaderTy, NodePrimitives, ReceiptTy, Recovered, RecoveredBlock,
@@ -341,7 +341,14 @@ where
                 )
                 .map_err(RethError::other)?
                 .into_executor();
-            executor.resume_at_tx_index(cached_prefix.cached_tx_count as u64)?;
+            // The prefix's transaction types restore the proof aggregate placement rules.
+            let prefix = ExecutedPrefix::from_tx_types(
+                transactions
+                    .iter()
+                    .take(cached_prefix.cached_tx_count)
+                    .map(|tx| tx.value().inner().ty()),
+            );
+            executor.resume_at_tx_index(cached_prefix.cached_tx_count as u64, prefix)?;
 
             for tx in transactions.iter().skip(cached_prefix.cached_tx_count).cloned() {
                 let _gas_used = executor.execute_transaction(tx)?;

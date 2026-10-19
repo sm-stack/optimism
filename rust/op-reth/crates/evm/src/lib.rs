@@ -67,7 +67,7 @@ pub mod tx;
 pub use tx::OpTx;
 
 pub use alloy_op_evm::{
-    OpBlockExecutionCtx, OpBlockExecutorFactory, OpEvm, OpEvmFactory, PostExecMode,
+    ExecutedPrefix, OpBlockExecutionCtx, OpBlockExecutorFactory, OpEvm, OpEvmFactory, PostExecMode,
     PreRefundGasUsed, ProofAggregateVerifier, SharedProofAggregateVerifier,
     post_exec::{
         NullRefundPolicy, PostExecEvmFactoryAdapter, PostExecExecutedTx, PostExecExecutorExt,

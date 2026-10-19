@@ -983,7 +983,9 @@ fn test_resume_rejects_mismatched_payload_block_number() {
     let mut fixture = JovianExecutorFixture::default();
     let mut executor = fixture.verifier(42, vec![SDMGasEntry { index: 0, gas_refund: 1 }]);
 
-    let err = executor.resume_at_tx_index(1).expect_err("mismatched block number must fail");
+    let err = executor
+        .resume_at_tx_index(1, ExecutedPrefix::default())
+        .expect_err("mismatched block number must fail");
     assert_invalid_post_exec(err, "payload block number 42 does not match block number 0");
 }
 
@@ -993,7 +995,9 @@ fn test_resume_rejects_producer() {
     let mut fixture = JovianExecutorFixture::default();
     let mut producer = fixture.executor_with_post_exec_mode(PostExecMode::Produce);
 
-    producer.resume_at_tx_index(1).expect_err("a producer cannot resume mid-block");
+    producer
+        .resume_at_tx_index(1, ExecutedPrefix::default())
+        .expect_err("a producer cannot resume mid-block");
 }
 
 #[test]
@@ -1006,7 +1010,7 @@ fn test_resumed_verifier_applies_entries_at_block_indexes() {
     let entries =
         vec![SDMGasEntry { index: 0, gas_refund: 5 }, SDMGasEntry { index: 1, gas_refund: REFUND }];
     let mut verifier = fixture.verifier(0, entries.clone());
-    verifier.resume_at_tx_index(1).expect("resume at index 1");
+    verifier.resume_at_tx_index(1, ExecutedPrefix::default()).expect("resume at index 1");
 
     verifier.execute_transaction(&legacy_tx(0, target)).expect("index-1 tx verifies");
     assert_eq!(verifier.gas_used, verifier.evm_gas_used - REFUND);

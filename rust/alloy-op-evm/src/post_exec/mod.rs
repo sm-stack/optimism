@@ -30,7 +30,7 @@ pub use inspector::{
     PostExecTxContext, PostExecTxKind,
 };
 
-use crate::block::{OpBlockExecutor, receipt_builder::OpReceiptBuilder};
+use crate::block::{ExecutedPrefix, OpBlockExecutor, receipt_builder::OpReceiptBuilder};
 
 /// The execution result consensus assigns to a post-exec transaction.
 ///
@@ -300,12 +300,16 @@ pub trait PostExecExecutorExt {
     fn seed_refund_snapshot(&mut self, state: Self::Snapshot);
 
     /// Resumes the block at transaction index `first_tx_index`, after a prefix that another
-    /// executor ran. See [`OpBlockExecutor::resume_at_tx_index`].
+    /// executor ran and that left `prefix`. See [`OpBlockExecutor::resume_at_tx_index`].
     ///
     /// # Errors
     ///
     /// Returns the payload-level errors that pre-execution would have raised.
-    fn resume_at_tx_index(&mut self, first_tx_index: u64) -> Result<(), BlockExecutionError>;
+    fn resume_at_tx_index(
+        &mut self,
+        first_tx_index: u64,
+        prefix: ExecutedPrefix,
+    ) -> Result<(), BlockExecutionError>;
 }
 
 impl<E, R, Spec> PostExecExecutorExt for OpBlockExecutor<E, R, Spec>
@@ -336,7 +340,11 @@ where
         Self::seed_refund_snapshot(self, state);
     }
 
-    fn resume_at_tx_index(&mut self, first_tx_index: u64) -> Result<(), BlockExecutionError> {
-        Self::resume_at_tx_index(self, first_tx_index)
+    fn resume_at_tx_index(
+        &mut self,
+        first_tx_index: u64,
+        prefix: ExecutedPrefix,
+    ) -> Result<(), BlockExecutionError> {
+        Self::resume_at_tx_index(self, first_tx_index, prefix)
     }
 }

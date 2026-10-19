@@ -493,11 +493,36 @@ pub struct OpBlockExecutor<Evm, R: OpReceiptBuilder, Spec> {
     /// Block index of the first transaction this executor runs: non-zero only after
     /// [`Self::resume_at_tx_index`].
     pub first_tx_index: u64,
-    /// Whether a non-deposit transaction has executed in this block. A proof aggregate
-    /// transaction must directly follow the block's deposits.
+    /// Whether a non-deposit transaction other than the proof aggregate has been committed in
+    /// this block. A proof aggregate transaction must directly follow the block's deposits.
     pub non_deposit_tx_seen: bool,
-    /// Whether this block's proof aggregate transaction has executed.
+    /// Whether this block's proof aggregate transaction has been committed.
     pub proof_aggregate_seen: bool,
+}
+
+/// The state that the transactions before a resume point leave for the ones after it; see
+/// [`OpBlockExecutor::resume_at_tx_index`].
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct ExecutedPrefix {
+    /// Whether the prefix holds a non-deposit transaction other than the proof aggregate.
+    pub non_deposit_tx_seen: bool,
+    /// Whether the prefix holds the block's proof aggregate transaction.
+    pub proof_aggregate_seen: bool,
+}
+
+impl ExecutedPrefix {
+    /// Derives the prefix state from the EIP-2718 types of its transactions, in block order.
+    pub fn from_tx_types(tx_types: impl IntoIterator<Item = u8>) -> Self {
+        let mut prefix = Self::default();
+        for ty in tx_types {
+            if ty == PROOF_AGGREGATE_TX_TYPE_ID {
+                prefix.proof_aggregate_seen = true;
+            } else if ty != DEPOSIT_TRANSACTION_TYPE {
+                prefix.non_deposit_tx_seen = true;
+            }
+        }
+        prefix
+    }
 }
 
 impl<E, R, Spec> OpBlockExecutor<E, R, Spec>
@@ -531,10 +556,12 @@ where
     }
 
     /// Resumes the block at transaction index `first_tx_index`, after a prefix that another
-    /// executor ran.
+    /// executor ran and that left `prefix`.
     ///
     /// The caller supplies the prefix's post-state as this executor's prestate and does not call
-    /// [`BlockExecutor::apply_pre_execution_changes`], which the prefix already applied. In
+    /// [`BlockExecutor::apply_pre_execution_changes`], which the prefix already applied. `prefix`
+    /// carries what the placement rules for a proof aggregate transaction need to know about the
+    /// prefix's transactions. In
     /// `Verify` mode the payload's entries for indexes below `first_tx_index` count as applied, so
     /// the prefix must have run against exactly those entries. Receipts, refund events and gas
     /// totals, including the block gas and DA admission budgets, cover only the transactions this
@@ -545,7 +572,11 @@ where
     /// Returns the payload-level errors that
     /// [`BlockExecutor::apply_pre_execution_changes`] would have raised, or an error in `Produce`
     /// mode, whose produced entries and refund-inspector state can't be rebuilt from a prestate.
-    pub fn resume_at_tx_index(&mut self, first_tx_index: u64) -> Result<(), BlockExecutionError> {
+    pub fn resume_at_tx_index(
+        &mut self,
+        first_tx_index: u64,
+        prefix: ExecutedPrefix,
+    ) -> Result<(), BlockExecutionError> {
         if self.post_exec.is_producing() {
             return Err(BlockExecutionError::msg(
                 "cannot resume a post-exec producer mid-block: its entries and refund state are lost",
@@ -561,6 +592,8 @@ where
             return Err(validation_error(OpBlockExecutionError::InvalidPostExecPayload(reason)));
         }
         self.first_tx_index = first_tx_index;
+        self.non_deposit_tx_seen = prefix.non_deposit_tx_seen;
+        self.proof_aggregate_seen = prefix.proof_aggregate_seen;
         self.post_exec.skip_verifier_entries_before(first_tx_index);
         Ok(())
     }
@@ -1110,19 +1143,13 @@ where
                     "proof aggregate tx at index {tx_index} lists no statements"
                 )));
             }
-            let verifier = self.ctx.proof_aggregate_verifier.as_ref().ok_or_else(|| {
+            let verifier = self.ctx.proof_aggregate_verifier.clone().ok_or_else(|| {
                 Self::invalid_proof_aggregate("no proof aggregate verifier configured")
             })?;
-            verifier
-                .verify(
-                    payload.aggregation_vkey_hash,
-                    payload.statements_commitment(),
-                    &payload.proof,
-                )
-                .map_err(|reason| {
-                    Self::invalid_proof_aggregate(format!("aggregate proof rejected: {reason}"))
-                })?;
 
+            // The registry call runs first: it commits nothing until `commit_transaction`, and it
+            // rejects an aggregate whose statements are not all pending far more cheaply than
+            // proof verification does.
             let statement_ids: Vec<B256> =
                 payload.statements.iter().map(|statement| statement.id()).collect();
             let ResultAndState { result, state } = self
@@ -1143,8 +1170,16 @@ where
                     "registry did not acknowledge the proof aggregate at index {tx_index}"
                 )));
             }
+            verifier
+                .verify(
+                    payload.aggregation_vkey_hash,
+                    payload.statements_commitment(),
+                    &payload.proof,
+                )
+                .map_err(|reason| {
+                    Self::invalid_proof_aggregate(format!("aggregate proof rejected: {reason}"))
+                })?;
 
-            self.proof_aggregate_seen = true;
             return Ok(OpTxResult {
                 inner: EthTxResult {
                     result: ResultAndState::new(
@@ -1167,10 +1202,6 @@ where
                 depositor_nonce: None,
             });
         }
-        if !is_deposit {
-            self.non_deposit_tx_seen = true;
-        }
-
         if is_post_exec {
             let payload =
                 tx.tx().as_post_exec().map(|tx| &tx.inner().payload).ok_or_else(|| {
@@ -1333,6 +1364,14 @@ where
         }
         if !is_post_exec {
             self.refund_events_by_tx.push(refund_events);
+        }
+
+        // Placement state for proof aggregates, updated only for committed transactions so a
+        // declined candidate leaves it untouched.
+        if tx_type.ty() == PROOF_AGGREGATE_TX_TYPE_ID {
+            self.proof_aggregate_seen = true;
+        } else if !is_deposit {
+            self.non_deposit_tx_seen = true;
         }
 
         // add canonical gas used
