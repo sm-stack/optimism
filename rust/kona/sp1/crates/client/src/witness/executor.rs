@@ -102,6 +102,10 @@ pub trait WitnessExecutor {
         let rollup_config = Arc::new(boot.rollup_config.clone());
 
         let evm_factory = PostExecEvmFactoryAdapter::new(ZkvmOpEvmFactory);
+        // Proof aggregate transactions are verified in software, as the Cannon client and the
+        // execution client do. SP1's deferred verification would be far cheaper, but it only shows
+        // that some valid proof of the statements exists, not that the proof the transaction
+        // carries is valid, which is what block validity depends on.
         let executor = KonaExecutor::new(
             rollup_config.as_ref(),
             l2_provider.clone(),
@@ -109,7 +113,10 @@ pub trait WitnessExecutor {
             evm_factory,
             OpAlloyReceiptBuilder::default(),
             None,
-        );
+        )
+        .with_proof_aggregate_verifier(Some(Arc::new(
+            op_sp1_proofs::Sp1ProofAggregateVerifier::new(),
+        )));
         let mut driver = Driver::new(cursor, executor, pipeline);
         let first_claim = BlockClaim::from(boot);
         for claim in std::iter::once(first_claim).chain(claims.following.iter().copied()) {

@@ -16,6 +16,7 @@ alloy-sol-types.workspace = true
 
 # Execution
 alloy-evm.workspace = true
+op-sp1-proofs.workspace = true
 alloy-op-evm.workspace = true
 op-revm.workspace = true
 revm.workspace = true
