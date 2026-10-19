@@ -1046,10 +1046,13 @@ where
 
     /// Includes the oldest pending proof aggregate, if any, as the next transaction.
     ///
-    /// Must run directly after [`Self::execute_sequencer_transactions`]. A failed aggregate is
-    /// discarded rather than failing the build: the usual cause is that a previous block already
-    /// included it, so the registry no longer has its statements pending. The executor runs the
-    /// failed attempt without committing, so the block is unaffected.
+    /// Must run directly after [`Self::execute_sequencer_transactions`]. The aggregate is held back
+    /// while the inclusion interval has not passed or it does not fit the DA and size limits that
+    /// also bound mempool transactions; see [`crate::proof_aggregation`] for why these are the
+    /// only bounds. A failed aggregate is discarded rather than failing the build: the usual cause
+    /// is that a previous block already included it, so the registry no longer has its statements
+    /// pending. The executor runs the failed attempt without committing, so the block is
+    /// unaffected.
     pub fn try_include_proof_aggregate(
         &self,
         info: &mut ExecutionInfo,
@@ -1060,15 +1063,42 @@ where
             return;
         }
         let pool = &self.builder_config.proof_aggregation_pool;
+        let block_number = self.parent().number() + 1;
+        if !pool.inclusion_allowed(block_number, self.builder_config.proof_aggregate_interval) {
+            return;
+        }
         let Some(aggregate) = pool.next_aggregate() else { return };
 
         let encoded = build_proof_aggregate_tx(
-            self.parent().number() + 1,
+            block_number,
             aggregate.aggregation_vkey_hash,
             aggregate.statements.clone(),
             aggregate.proof.clone(),
         )
         .encoded_2718();
+        let tx_da_size = op_alloy_flz::tx_estimated_size_fjord_bytes(&encoded);
+        let tx_uncompressed_size = encoded.len() as u64;
+        // Same limits as a mempool transaction, except the DA footprint: the executor leaves the
+        // aggregate out of it. The aggregate uses no block gas.
+        if info.is_tx_over_limits(
+            tx_da_size,
+            builder.evm_mut().block().gas_limit(),
+            self.builder_config.da_config.max_da_tx_size(),
+            self.builder_config.da_config.max_da_block_size(),
+            0,
+            None,
+            tx_uncompressed_size,
+            self.builder_config.max_uncompressed_block_size,
+        ) {
+            debug!(
+                target: "payload_builder",
+                tx_da_size,
+                tx_uncompressed_size,
+                "proof aggregate exceeds the block's DA or size limits, deferring"
+            );
+            return;
+        }
+
         let tx = match TxTy::<Evm::Primitives>::decode_2718_exact(&encoded) {
             Ok(tx) => Recovered::new_unchecked(tx, Address::ZERO),
             Err(err) => {
@@ -1080,7 +1110,9 @@ where
 
         match builder.execute_transaction(tx) {
             Ok(_) => {
-                info.cumulative_uncompressed_bytes += encoded.len() as u64;
+                info.cumulative_da_bytes_used += tx_da_size;
+                info.cumulative_uncompressed_bytes += tx_uncompressed_size;
+                pool.record_inclusion(block_number);
                 debug!(
                     target: "payload_builder",
                     statements = aggregate.statements.len(),

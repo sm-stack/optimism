@@ -8,8 +8,13 @@ use std::sync::{
 };
 use tracing::info;
 
+/// Default for [`OpBuilderConfig::proof_aggregate_interval`]: one aggregate every 30 blocks, or a
+/// minute at 2-second blocks. A 1.27 MB SP1 compressed proof is about 790 kB of estimated DA, so
+/// this averages about 13 kB/s, a fifth of the roughly 64 kB/s that L1 blobs carry at target.
+pub const DEFAULT_PROOF_AGGREGATE_INTERVAL: u64 = 30;
+
 /// Settings for the OP builder.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct OpBuilderConfig {
     /// Data availability configuration for the OP builder.
     pub da_config: OpDAConfig,
@@ -19,6 +24,12 @@ pub struct OpBuilderConfig {
     pub operator_sdm_opt_in: OperatorSdmOptIn,
     /// Proof aggregates waiting for inclusion. Shared with the proof aggregation RPC.
     pub proof_aggregation_pool: crate::proof_aggregation::ProofAggregationPool,
+    /// Minimum number of blocks between two blocks that include a proof aggregate. `0` and `1`
+    /// allow one in every block.
+    ///
+    /// This is sequencer policy, not a consensus rule; see the limitations in
+    /// [`crate::proof_aggregation`].
+    pub proof_aggregate_interval: u64,
     /// Interop failsafe gate. Set by the interop filter client; read by the builder to exclude
     /// interop txs from blocks while it is enabled.
     pub interop_failsafe: InteropFailsafe,
@@ -33,6 +44,12 @@ pub struct OpBuilderConfig {
     pub max_uncompressed_block_size: Option<u64>,
 }
 
+impl Default for OpBuilderConfig {
+    fn default() -> Self {
+        Self::new(OpDAConfig::default(), OpGasLimitConfig::default())
+    }
+}
+
 impl OpBuilderConfig {
     /// Creates a new OP builder configuration with the given data availability configuration.
     pub fn new(da_config: OpDAConfig, gas_limit_config: OpGasLimitConfig) -> Self {
@@ -41,6 +58,7 @@ impl OpBuilderConfig {
             gas_limit_config,
             operator_sdm_opt_in: OperatorSdmOptIn::default(),
             proof_aggregation_pool: Default::default(),
+            proof_aggregate_interval: DEFAULT_PROOF_AGGREGATE_INTERVAL,
             interop_failsafe: InteropFailsafe::default(),
             max_uncompressed_block_size: None,
         }

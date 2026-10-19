@@ -296,6 +296,7 @@ impl OpNode {
             gas_limit_config: self.gas_limit_config.clone(),
             operator_sdm_opt_in: self.operator_sdm_opt_in.clone(),
             proof_aggregation_pool: self.proof_aggregation_pool.clone(),
+            proof_aggregate_interval: self.args.proof_aggregate_interval,
             interop_failsafe: self.interop_failsafe.clone(),
             max_uncompressed_block_size: self.args.max_uncompressed_block_size,
         }

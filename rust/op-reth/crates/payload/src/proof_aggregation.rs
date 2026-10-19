@@ -8,6 +8,34 @@
 //! The pool is in-memory and starts empty on every boot. Every proof it accepts has already been
 //! verified natively by the RPC handler, which also checks that the registry holds the statement
 //! pending; the pool itself only bounds, stores and hands them out.
+//!
+//! # DA limits
+//!
+//! An aggregate carries a 1.27 MB SP1 compressed proof, about 790 kB of estimated DA. The payload
+//! builder counts it against the same local limits as mempool transactions: the per-transaction
+//! and per-block DA sizes the batcher sets while throttling (`miner_setMaxDASize`) and the
+//! maximum uncompressed block size. An aggregate that does not fit waits for a later block. On top
+//! of that, the builder includes at most one aggregate every
+//! [`proof_aggregate_interval`](crate::config::OpBuilderConfig::proof_aggregate_interval) blocks.
+//!
+//! These are limitations of that approach:
+//!
+//! - **Not a consensus rule.** The executor leaves the aggregate out of the Jovian DA footprint: it
+//!   adds nothing to the header's `blobGasUsed`, does not raise the base fee, and is not bounded by
+//!   the block gas limit. Only the sequencer's policy bounds the DA aggregates add; validators and
+//!   the fault proof program accept an aggregate in every block. Counting it in the footprint
+//!   instead would make it unincludable on most chains: at the default scalar of 400 it needs about
+//!   317M gas of footprint, against block gas limits of 40M to 60M.
+//! - **Throttling is reactive.** The batcher sets DA limits only once its backlog passes a
+//!   threshold (3.2 MB by default). Any throttle level then caps transactions at 20 kB or less,
+//!   which pauses aggregates entirely. Until then the interval alone bounds aggregate DA.
+//! - **No price signal.** Aggregate DA is paid for by the statement fee charged when a statement is
+//!   submitted to the `ProofRegistry`, not through the base fee, so heavy aggregation does not make
+//!   L2 block space more expensive.
+//! - **The interval is approximate.** The last inclusion is kept in memory: it resets on restart,
+//!   and a payload that never becomes canonical still counts, which only delays the next aggregate.
+//!
+//! Smaller proofs are the lasting fix; a WHIR-based proof would be roughly a fifth of the size.
 
 use alloy_primitives::{B256, Bytes};
 use op_alloy_consensus::ProofStatement;
@@ -90,6 +118,8 @@ struct Inner {
     statement_proofs: BTreeMap<B256, StatementProof>,
     /// Aggregates in submission order.
     aggregates: VecDeque<PendingAggregate>,
+    /// Number of the last block the payload builder included an aggregate in.
+    last_inclusion: Option<u64>,
 }
 
 /// Shared handle to the sequencer's proof aggregation queue. Clones share the same state: the RPC
@@ -199,6 +229,20 @@ impl ProofAggregationPool {
         self.lock().aggregates.retain(|queued| queued != aggregate);
     }
 
+    /// Whether a block numbered `block_number` may include an aggregate: at least `interval` blocks
+    /// after the last block that did. Rebuilding that same block, or a lower one after a reorg,
+    /// is allowed.
+    pub fn inclusion_allowed(&self, block_number: u64, interval: u64) -> bool {
+        self.lock().last_inclusion.is_none_or(|last| {
+            block_number <= last || block_number >= last.saturating_add(interval)
+        })
+    }
+
+    /// Records that the payload builder included an aggregate in block `block_number`.
+    pub fn record_inclusion(&self, block_number: u64) {
+        self.lock().last_inclusion = Some(block_number);
+    }
+
     /// Number of aggregates waiting for inclusion.
     pub fn pending_aggregates(&self) -> usize {
         self.lock().aggregates.len()
@@ -266,6 +310,21 @@ mod tests {
         pool.remove_statement_proofs(&[first.statement.id()]);
         assert_eq!(pool.statement_proofs().len(), MAX_STATEMENT_PROOFS - 1);
         assert!(pool.insert_statement_proof(statement_proof(1)).is_ok());
+    }
+
+    #[test]
+    fn inclusion_interval() {
+        let pool = ProofAggregationPool::default();
+        assert!(pool.inclusion_allowed(5, 30), "nothing included yet");
+
+        pool.record_inclusion(10);
+        assert!(pool.inclusion_allowed(10, 30), "rebuilding the same block");
+        assert!(pool.inclusion_allowed(9, 30), "a lower block after a reorg");
+        assert!(!pool.inclusion_allowed(11, 30));
+        assert!(!pool.inclusion_allowed(39, 30));
+        assert!(pool.inclusion_allowed(40, 30));
+        assert!(pool.inclusion_allowed(11, 1), "an interval of 1 allows every block");
+        assert!(pool.inclusion_allowed(11, 0), "so does 0");
     }
 
     #[test]

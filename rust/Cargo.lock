@@ -14101,6 +14101,7 @@ dependencies = [
  "metrics-exporter-prometheus",
  "metrics-util",
  "op-alloy-consensus",
+ "op-alloy-flz",
  "op-alloy-rpc-types-engine",
  "op-revm",
  "reth-basic-payload-builder",

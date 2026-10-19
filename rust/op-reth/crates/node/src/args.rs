@@ -5,6 +5,7 @@
 use alloy_primitives::Address;
 use clap::builder::ArgPredicate;
 use op_alloy_consensus::interop::SafetyLevel;
+use reth_optimism_payload_builder::config::DEFAULT_PROOF_AGGREGATE_INTERVAL;
 use reth_optimism_trie::DEFAULT_BACKFILL_BATCH_SIZE;
 use std::path::PathBuf;
 use url::Url;
@@ -256,6 +257,19 @@ pub struct RollupArgs {
     #[arg(long = "rollup.max-uncompressed-block-size", value_name = "MAX_UNCOMPRESSED_BLOCK_SIZE")]
     pub max_uncompressed_block_size: Option<u64>,
 
+    /// Minimum number of blocks between two blocks that include a proof aggregate; `0` and `1`
+    /// allow one in every block.
+    ///
+    /// Proof aggregates sit outside the DA footprint block limit, so this and the DA throttling
+    /// limits are what bound the DA they add. The limit is local sequencer policy: other nodes
+    /// accept an aggregate in any block.
+    #[arg(
+        long = "rollup.proof-aggregate-interval",
+        value_name = "BLOCKS",
+        default_value_t = DEFAULT_PROOF_AGGREGATE_INTERVAL
+    )]
+    pub proof_aggregate_interval: u64,
+
     /// A URL pointing to a secure websocket subscription that streams out flashblocks.
     ///
     /// If given, the flashblocks are received to build pending block. All request with "pending"
@@ -332,6 +346,7 @@ impl Default for RollupArgs {
             historical_rpc: None,
             min_suggested_priority_fee: 1_000_000,
             max_uncompressed_block_size: None,
+            proof_aggregate_interval: DEFAULT_PROOF_AGGREGATE_INTERVAL,
             flashblocks_url: None,
             flashblock_consensus: false,
             proofs_history: false,
