@@ -967,16 +967,19 @@ where
             operator_sdm_opt_in,
             ctx.node.provider().chain_spec(),
         );
-        let proof_aggregation_ext =
-            reth_optimism_rpc::proof_aggregation::OpProofAggregationApi::new(
-                proof_aggregation_pool,
-            );
 
         let sequencer_client = if let Some(url) = sequencer_url {
             Some(SequencerClient::new_with_headers(url, sequencer_headers).await?)
         } else {
             None
         };
+
+        let proof_aggregation_ext =
+            reth_optimism_rpc::proof_aggregation::OpProofAggregationApi::new(
+                proof_aggregation_pool,
+                ctx.node.provider().clone(),
+                sequencer_client.clone(),
+            );
 
         let tx_conditional_ext: OpEthExtApi<N::Pool, N::Provider> = OpEthExtApi::new(
             sequencer_client,

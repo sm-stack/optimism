@@ -6,7 +6,8 @@
 //! aggregate (`0x7C`) transaction, directly after the deposits.
 //!
 //! The pool is in-memory and starts empty on every boot. Every proof it accepts has already been
-//! verified natively by the RPC handler; the pool itself only stores and hands them out.
+//! verified natively by the RPC handler, which also checks that the registry holds the statement
+//! pending; the pool itself only bounds, stores and hands them out.
 
 use alloy_primitives::{B256, Bytes};
 use op_alloy_consensus::ProofStatement;
@@ -16,9 +17,19 @@ use std::{
     sync::{Arc, Mutex, MutexGuard},
 };
 
-/// Upper bound on statement proofs held at once, so unaggregated submissions cannot grow the
-/// pool without limit.
-pub const MAX_STATEMENT_PROOFS: usize = 4096;
+/// Upper bound on statement proofs held at once. With the per-proof size limits below, the pool
+/// holds at most about 530 MiB.
+pub const MAX_STATEMENT_PROOFS: usize = 256;
+
+/// Upper bound on an encoded SP1 compressed proof. Compressed proofs have a fixed shape of about
+/// 1.27 MB regardless of the program.
+pub const MAX_PROOF_BYTES: usize = 2 * 1024 * 1024;
+
+/// Upper bound on a statement's public values.
+pub const MAX_PUBLIC_VALUES_BYTES: usize = 64 * 1024;
+
+/// Upper bound on an encoded `SP1VerifyingKey`, which is about 100 bytes.
+pub const MAX_VERIFYING_KEY_BYTES: usize = 4 * 1024;
 
 /// Upper bound on aggregates waiting for inclusion.
 pub const MAX_PENDING_AGGREGATES: usize = 16;
@@ -54,6 +65,17 @@ pub struct PendingAggregate {
 /// Why the pool refused an insertion.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 pub enum ProofAggregationPoolError {
+    /// A field exceeds its size limit.
+    #[error("{field} exceeds {limit} bytes")]
+    TooLarge {
+        /// The oversized field.
+        field: &'static str,
+        /// Its limit in bytes.
+        limit: usize,
+    },
+    /// The pool already holds a proof of the statement.
+    #[error("statement proof already queued")]
+    AlreadyQueued,
     /// The pool already holds [`MAX_STATEMENT_PROOFS`] statement proofs.
     #[error("statement proof pool is full")]
     StatementProofsFull,
@@ -82,16 +104,51 @@ impl ProofAggregationPool {
         self.inner.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
     }
 
-    /// Adds a verified statement proof. Re-submitting a statement replaces its proof.
+    /// Checks a statement proof's fields against their size limits.
+    pub fn check_sizes(
+        public_values: &[u8],
+        proof: &[u8],
+        verifying_key: &[u8],
+    ) -> Result<(), ProofAggregationPoolError> {
+        for (field, len, limit) in [
+            ("public values", public_values.len(), MAX_PUBLIC_VALUES_BYTES),
+            ("proof", proof.len(), MAX_PROOF_BYTES),
+            ("verifying key", verifying_key.len(), MAX_VERIFYING_KEY_BYTES),
+        ] {
+            if len > limit {
+                return Err(ProofAggregationPoolError::TooLarge { field, limit });
+            }
+        }
+        Ok(())
+    }
+
+    /// Checks that a proof of `statement_id` could be queued now, before the caller pays for
+    /// verifying it. [`Self::insert_statement_proof`] checks again.
+    pub fn check_room(&self, statement_id: B256) -> Result<(), ProofAggregationPoolError> {
+        let inner = self.lock();
+        if inner.statement_proofs.contains_key(&statement_id) {
+            return Err(ProofAggregationPoolError::AlreadyQueued);
+        }
+        if inner.statement_proofs.len() >= MAX_STATEMENT_PROOFS {
+            return Err(ProofAggregationPoolError::StatementProofsFull);
+        }
+        Ok(())
+    }
+
+    /// Adds a verified statement proof. The first proof of a statement wins: any valid proof is as
+    /// good as another, and refusing replacements stops a caller from re-verifying one statement
+    /// over and over.
     pub fn insert_statement_proof(
         &self,
         proof: StatementProof,
     ) -> Result<B256, ProofAggregationPoolError> {
+        Self::check_sizes(&proof.public_values, &proof.proof, &proof.verifying_key)?;
         let id = proof.statement.id();
         let mut inner = self.lock();
-        if !inner.statement_proofs.contains_key(&id) &&
-            inner.statement_proofs.len() >= MAX_STATEMENT_PROOFS
-        {
+        if inner.statement_proofs.contains_key(&id) {
+            return Err(ProofAggregationPoolError::AlreadyQueued);
+        }
+        if inner.statement_proofs.len() >= MAX_STATEMENT_PROOFS {
             return Err(ProofAggregationPoolError::StatementProofsFull);
         }
         inner.statement_proofs.insert(id, proof);
@@ -101,6 +158,15 @@ impl ProofAggregationPool {
     /// Returns the statement proofs waiting to be aggregated, ordered by statement id.
     pub fn statement_proofs(&self) -> Vec<StatementProof> {
         self.lock().statement_proofs.values().cloned().collect()
+    }
+
+    /// Drops the proofs of the statements in `ids`, such as statements the registry no longer
+    /// holds pending.
+    pub fn remove_statement_proofs(&self, ids: &[B256]) {
+        let mut inner = self.lock();
+        for id in ids {
+            inner.statement_proofs.remove(id);
+        }
     }
 
     /// Queues a verified aggregate for inclusion and drops the statement proofs it covers.
@@ -190,9 +256,60 @@ mod tests {
             pool.insert_statement_proof(statement_proof(1)),
             Err(ProofAggregationPoolError::StatementProofsFull)
         );
-        // Replacing an existing statement's proof is still allowed when full.
-        let mut existing = statement_proof(0);
-        existing.statement.vkey_hash = B256::ZERO;
-        assert!(pool.insert_statement_proof(existing).is_ok());
+        assert_eq!(
+            pool.check_room(statement_proof(1).statement.id()),
+            Err(ProofAggregationPoolError::StatementProofsFull)
+        );
+
+        let mut first = statement_proof(0);
+        first.statement.vkey_hash = B256::ZERO;
+        pool.remove_statement_proofs(&[first.statement.id()]);
+        assert_eq!(pool.statement_proofs().len(), MAX_STATEMENT_PROOFS - 1);
+        assert!(pool.insert_statement_proof(statement_proof(1)).is_ok());
+    }
+
+    #[test]
+    fn first_proof_of_a_statement_wins() {
+        let pool = ProofAggregationPool::default();
+        let original = statement_proof(1);
+        pool.insert_statement_proof(original.clone()).unwrap();
+
+        let mut replacement = original.clone();
+        replacement.proof = Bytes::from_static(b"other");
+        assert_eq!(
+            pool.check_room(replacement.statement.id()),
+            Err(ProofAggregationPoolError::AlreadyQueued)
+        );
+        assert_eq!(
+            pool.insert_statement_proof(replacement),
+            Err(ProofAggregationPoolError::AlreadyQueued)
+        );
+        assert_eq!(pool.statement_proofs(), vec![original]);
+    }
+
+    #[test]
+    fn rejects_oversized_fields() {
+        let pool = ProofAggregationPool::default();
+        let mut proof = statement_proof(1);
+        proof.proof = Bytes::from(vec![0; MAX_PROOF_BYTES + 1]);
+        assert_eq!(
+            pool.insert_statement_proof(proof),
+            Err(ProofAggregationPoolError::TooLarge { field: "proof", limit: MAX_PROOF_BYTES })
+        );
+        assert_eq!(
+            ProofAggregationPool::check_sizes(&[0; MAX_PUBLIC_VALUES_BYTES + 1], &[], &[]),
+            Err(ProofAggregationPoolError::TooLarge {
+                field: "public values",
+                limit: MAX_PUBLIC_VALUES_BYTES
+            })
+        );
+        assert_eq!(
+            ProofAggregationPool::check_sizes(&[], &[], &[0; MAX_VERIFYING_KEY_BYTES + 1]),
+            Err(ProofAggregationPoolError::TooLarge {
+                field: "verifying key",
+                limit: MAX_VERIFYING_KEY_BYTES
+            })
+        );
+        assert!(pool.statement_proofs().is_empty());
     }
 }

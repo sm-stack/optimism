@@ -7,7 +7,7 @@
 //! invalidates the block.
 
 use alloc::{string::String, sync::Arc, vec::Vec};
-use alloy_primitives::{Address, B256, Bytes, address, keccak256};
+use alloy_primitives::{Address, B256, Bytes, U256, address, keccak256};
 use core::fmt::Debug;
 
 /// Address of the `ProofRegistry` predeploy.
@@ -16,6 +16,18 @@ pub const PROOF_REGISTRY_ADDRESS: Address = address!("0x420000000000000000000000
 /// Caller of the registry's `verifyStatements`: the system address used for system calls.
 pub const PROOF_AGGREGATE_SYSTEM_CALLER: Address =
     address!("0xfffffffffffffffffffffffffffffffffffffffe");
+
+/// `ProofRegistry.StatementStatus.Pending`: the statement is registered and its fee paid, but no
+/// aggregate has verified it yet. Only pending statements can be verified.
+pub const STATEMENT_STATUS_PENDING: U256 = U256::from_limbs([1, 0, 0, 0]);
+
+/// Storage slot of `ProofRegistry._statementStatus[statement_id]`, a `StatementStatus` held in the
+/// mapping at slot 0.
+pub fn statement_status_slot(statement_id: B256) -> B256 {
+    let mut preimage = [0u8; 64];
+    preimage[..32].copy_from_slice(statement_id.as_slice());
+    keccak256(preimage)
+}
 
 /// Verifies the aggregate proof carried by a proof aggregate transaction.
 ///
@@ -94,5 +106,14 @@ mod tests {
         assert_eq!(&data[100..132], ids[0].as_slice());
         assert_eq!(&data[132..164], ids[1].as_slice());
         assert_eq!(data.len(), 164);
+    }
+
+    #[test]
+    fn statement_status_slot_matches_solidity_mapping() {
+        // `cast index bytes32 0x1111…1111 0`
+        assert_eq!(
+            statement_status_slot(B256::repeat_byte(0x11)),
+            B256::from(hex!("5c75bb376affa44a4f06c8a768453c2f7945122a65eb322a0dd3cc2edcbd6f0a"))
+        );
     }
 }
