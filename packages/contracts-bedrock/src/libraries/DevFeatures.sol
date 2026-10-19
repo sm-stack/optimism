@@ -42,6 +42,10 @@ library DevFeatures {
     bytes32 public constant ZK_DISPUTE_GAME =
         bytes32(0x0000000000000000000000000000000000000000000000000000000001000000);
 
+    /// @notice The feature that installs the ProofClaimRegistry predeploy at L2 genesis, for SP1 proof
+    ///         claims finalized by claim aggregate transactions.
+    bytes32 public constant PROOF_CLAIMS = bytes32(0x0000000000000000000000000000000000000000000000000000000100000000);
+
     /// @notice The feature that enables the super root games migration path in OPCM upgrade.
     bytes32 public constant SUPER_ROOT_GAMES_MIGRATION =
         bytes32(0x0000000000000000000000000000000000000000000000000000000010000000);

@@ -639,9 +639,13 @@ mod tests {
         assert_eq!(claims_commitment(&[]), keccak256([]));
     }
 
+    /// Golden vector shared with `ProofClaimRegistry_ClaimId_Test` in contracts-bedrock.
     #[test]
     fn claim_id_matches_registry_encoding() {
         let claim = sample().payload.claims[1];
-        assert_eq!(claim.id(), keccak256([[0x22u8; 32], [0x33u8; 32]].concat()));
+        assert_eq!(
+            claim.id(),
+            b256!("0xf3357627f4934d47fe409005b05c900777a6d97ec3788304e2d9c7b4d322cd4d")
+        );
     }
 }

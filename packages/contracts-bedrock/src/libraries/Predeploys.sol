@@ -117,6 +117,11 @@ library Predeploys {
     /// @notice Address of the UndeliveredMessageExporter predeploy.
     address internal constant UNDELIVERED_MESSAGE_EXPORTER = 0x4200000000000000000000000000000000000030;
 
+    /// @notice Address of the ProofClaimRegistry predeploy. It has no `PredeployRecord`: while the
+    ///         `PROOF_CLAIMS` dev feature is in development, L2Genesis installs it directly and it is
+    ///         outside the L2ContractsManager upgrade path and NUT bundles.
+    address internal constant PROOF_CLAIM_REGISTRY = 0x4200000000000000000000000000000000000031;
+
     /// @notice Implementation variant selector.
     /// @dev Values are array indexes into `PredeployRecord.variants`.
     enum VariantKind {

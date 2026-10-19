@@ -1,0 +1,23 @@
+[
+  {
+    "bytes": "32",
+    "label": "_claimStatus",
+    "offset": 0,
+    "slot": "0",
+    "type": "mapping(bytes32 => enum ProofClaimRegistry.ClaimStatus)"
+  },
+  {
+    "bytes": "32",
+    "label": "aggregationVkeyHash",
+    "offset": 0,
+    "slot": "1",
+    "type": "bytes32"
+  },
+  {
+    "bytes": "32",
+    "label": "blobGasPerClaim",
+    "offset": 0,
+    "slot": "2",
+    "type": "uint256"
+  }
+]

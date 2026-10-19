@@ -303,6 +303,9 @@ contract L2Genesis is Script {
         // vm.etch and setL2DevFeatureFlags manages its own prank as DEPOSITOR_ACCOUNT.
         setConditionalDeployer(); // 2C
         setL2DevFeatureFlags(_input); // 2D
+        if (DevFeatures.isDevFeatureEnabled(_input.devFeatureBitmap, DevFeatures.PROOF_CLAIMS)) {
+            setProofClaimRegistry(); // 31
+        }
         // deploy() upgrades ConditionalDeployer and L2DevFeatureFlags, so it must run after both are set.
         _deployPredeploysViaL2CM(_input);
     }
@@ -649,6 +652,17 @@ contract L2Genesis is Script {
             Predeploys.UNDELIVERED_MESSAGE_EXPORTER, DevFeatures.OPTIMISM_PORTAL_INTEROP, false, true
         );
         _setImplementationCode(Predeploys.UNDELIVERED_MESSAGE_EXPORTER);
+    }
+
+    /// @notice Installs the ProofClaimRegistry behind its predeploy proxy. It has no
+    ///         `PredeployRecord` while the PROOF_CLAIMS dev feature is in development, so it is set
+    ///         here rather than through the record-driven proxy setup and L2ContractsManager.
+    ///         It has no initializer; its owner-set parameters start at zero.
+    function setProofClaimRegistry() internal {
+        address impl = Predeploys.predeployToCodeNamespace(Predeploys.PROOF_CLAIM_REGISTRY);
+        vm.etch(impl, DeployUtils.getDeployedCode("ProofClaimRegistry.sol:ProofClaimRegistry"));
+        EIP1967Helper.setAdmin(impl, Predeploys.PROXY_ADMIN);
+        EIP1967Helper.setImplementation(Predeploys.PROOF_CLAIM_REGISTRY, impl);
     }
 
     /// @notice This predeploy is following the safety invariant #1.
