@@ -54,6 +54,11 @@ pub use block::{
 
 pub mod post_exec;
 
+pub mod claim_aggregate;
+pub use claim_aggregate::{
+    ClaimAggregateVerifier, PROOF_CLAIM_REGISTRY_ADDRESS, SharedClaimAggregateVerifier,
+};
+
 /// The OP EVM context type.
 pub type OpEvmContext<DB> = Context<BlockEnv, OpTx, CfgEnv<OpSpecId>, DB, Journal<DB>, L1BlockInfo>;
 

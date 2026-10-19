@@ -183,6 +183,9 @@ impl SingleBatch {
                 Ok(OpTxType::PostExec) if !cfg.is_sdm_active(self.timestamp) => {
                     return BatchValidity::Drop(BatchDropReason::PostExecPreLagoon);
                 }
+                Ok(OpTxType::ClaimAggregate) if !cfg.is_proof_claims_active(self.timestamp) => {
+                    return BatchValidity::Drop(BatchDropReason::ClaimAggregateInactive);
+                }
                 _ => {}
             }
         }

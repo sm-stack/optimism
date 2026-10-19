@@ -8,7 +8,7 @@ use alloy_eips::{Encodable2718, Typed2718, eip7594::Encodable7594};
 use alloy_evm::{FromRecoveredTx, FromTxWithEncoded, IntoTxEnv, TransactionEnvMut};
 use alloy_primitives::{Address, B256, Bytes, TxKind, U256};
 use core::ops::{Deref, DerefMut};
-use op_alloy::consensus::{OpTxEnvelope, TxDeposit, TxPostExec};
+use op_alloy::consensus::{OpTxEnvelope, TxClaimAggregate, TxDeposit, TxPostExec};
 use op_revm::{OpTransaction, transaction::deposit::DepositTransactionParts};
 use revm::context::TxEnv;
 
@@ -33,6 +33,23 @@ fn deposit_tx_env(tx: &TxDeposit, caller: Address) -> TxEnv {
 /// never transacted (the EVM short-circuits them with the consensus-defined no-op result), and
 /// preserving the zero gas limit ensures accidental execution fails intrinsic gas validation.
 pub fn post_exec_tx_env(tx: &TxPostExec, caller: Address) -> TxEnv {
+    TxEnv {
+        caller,
+        chain_id: tx.chain_id(),
+        data: tx.input().clone(),
+        gas_limit: tx.gas_limit(),
+        kind: tx.kind(),
+        tx_type: tx.ty(),
+        ..Default::default()
+    }
+}
+
+/// Builds the [`TxEnv`] for a claim aggregate transaction.
+///
+/// Like post-exec transactions, claim aggregate transactions are never transacted: the block
+/// executor verifies the aggregate proof and performs the registry call itself. The env mirrors the
+/// transaction, and the zero gas limit makes accidental execution fail intrinsic gas validation.
+pub fn claim_aggregate_tx_env(tx: &TxClaimAggregate, caller: Address) -> TxEnv {
     TxEnv {
         caller,
         chain_id: tx.chain_id(),
@@ -192,6 +209,7 @@ impl FromTxWithEncoded<OpTxEnvelope> for OpTx {
             OpTxEnvelope::Eip7702(tx) => Self::from_encoded_tx(tx, caller, encoded),
             OpTxEnvelope::Deposit(tx) => Self::from_encoded_tx(tx.inner(), caller, encoded),
             OpTxEnvelope::PostExec(tx) => Self::from_encoded_tx(tx.inner(), caller, encoded),
+            OpTxEnvelope::ClaimAggregate(tx) => Self::from_encoded_tx(tx.inner(), caller, encoded),
         }
     }
 }
@@ -285,6 +303,20 @@ impl FromRecoveredTx<TxPostExec> for OpTx {
 impl FromTxWithEncoded<TxPostExec> for OpTx {
     fn from_encoded_tx(tx: &TxPostExec, caller: Address, encoded: Bytes) -> Self {
         let base = post_exec_tx_env(tx, caller);
+        Self(OpTransaction { base, enveloped_tx: Some(encoded), deposit: Default::default() })
+    }
+}
+
+impl FromRecoveredTx<TxClaimAggregate> for OpTx {
+    fn from_recovered_tx(tx: &TxClaimAggregate, _sender: Address) -> Self {
+        let encoded = tx.encoded_2718();
+        Self::from_encoded_tx(tx, Address::ZERO, encoded.into())
+    }
+}
+
+impl FromTxWithEncoded<TxClaimAggregate> for OpTx {
+    fn from_encoded_tx(tx: &TxClaimAggregate, caller: Address, encoded: Bytes) -> Self {
+        let base = claim_aggregate_tx_env(tx, caller);
         Self(OpTransaction { base, enveloped_tx: Some(encoded), deposit: Default::default() })
     }
 }

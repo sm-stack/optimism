@@ -13,7 +13,7 @@ use alloy_evm::{
     block::{BlockExecutionResult, BlockExecutor, BlockExecutorFactory},
 };
 use alloy_op_evm::{
-    OpBlockExecutionCtx, OpBlockExecutorFactory, PostExecMode,
+    OpBlockExecutionCtx, OpBlockExecutorFactory, PostExecMode, SharedClaimAggregateVerifier,
     block::{OpTxEnv, receipt_builder::OpReceiptBuilder},
 };
 use alloy_op_hardforks::OpHardforks;
@@ -104,6 +104,8 @@ where
     /// understand OP-specific transaction types, system calls, and state
     /// management required for proper L2 block execution.
     pub(crate) factory: OpBlockExecutorFactory<R, RollupConfig, Evm>,
+    /// Verifier for claim aggregate transactions. `None` rejects any block that carries one.
+    pub(crate) claim_aggregate_verifier: Option<SharedClaimAggregateVerifier>,
     /// Test-only override for SDM activation while the fork is not yet scheduled.
     #[cfg(any(test, feature = "test-utils"))]
     pub(crate) sdm_active_override: Option<bool>,
@@ -166,9 +168,20 @@ where
             config,
             trie_db,
             factory,
+            claim_aggregate_verifier: None,
             #[cfg(any(test, feature = "test-utils"))]
             sdm_active_override: None,
         }
+    }
+
+    /// Sets the verifier used for claim aggregate transactions.
+    #[must_use]
+    pub fn with_claim_aggregate_verifier(
+        mut self,
+        verifier: Option<SharedClaimAggregateVerifier>,
+    ) -> Self {
+        self.claim_aggregate_verifier = verifier;
+        self
     }
 
     /// Overrides SDM activation for tests and fixture tooling.
@@ -320,6 +333,7 @@ where
             // This field is unused for individual block building jobs.
             extra_data: Default::default(),
             post_exec_mode,
+            claim_aggregate_verifier: self.claim_aggregate_verifier.clone(),
         };
         let executor = self.factory.create_executor(evm, ctx);
 

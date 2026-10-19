@@ -15,8 +15,8 @@
 //!   were previously provided by reth's in-tree codecs crate.
 
 use crate::{
-    OpReceipt, OpTxEnvelope, OpTxType, OpTypedTransaction, POST_EXEC_TX_TYPE_ID, TxDeposit,
-    TxPostExec,
+    CLAIM_AGGREGATE_TX_TYPE_ID, OpReceipt, OpTxEnvelope, OpTxType, OpTypedTransaction,
+    POST_EXEC_TX_TYPE_ID, TxClaimAggregate, TxDeposit, TxPostExec,
 };
 use alloc::vec::Vec;
 use alloy_consensus::{Receipt, Signed, Transaction};
@@ -51,6 +51,10 @@ impl Compact for OpTxType {
                 buf.put_u8(POST_EXEC_TX_TYPE_ID);
                 COMPACT_EXTENDED_IDENTIFIER_FLAG
             }
+            Self::ClaimAggregate => {
+                buf.put_u8(CLAIM_AGGREGATE_TX_TYPE_ID);
+                COMPACT_EXTENDED_IDENTIFIER_FLAG
+            }
         }
     }
 
@@ -66,6 +70,7 @@ impl Compact for OpTxType {
                     alloy_consensus::constants::EIP7702_TX_TYPE_ID => Self::Eip7702,
                     crate::DEPOSIT_TX_TYPE_ID => Self::Deposit,
                     POST_EXEC_TX_TYPE_ID => Self::PostExec,
+                    CLAIM_AGGREGATE_TX_TYPE_ID => Self::ClaimAggregate,
                     _ => panic!("Unsupported OpTxType identifier: {extended_identifier}"),
                 };
                 (ty, buf)
@@ -154,6 +159,22 @@ impl Compact for TxPostExec {
     }
 }
 
+impl Compact for TxClaimAggregate {
+    fn to_compact<B>(&self, buf: &mut B) -> usize
+    where
+        B: bytes::BufMut + AsMut<[u8]>,
+    {
+        self.input().to_compact(buf)
+    }
+
+    fn from_compact(buf: &[u8], len: usize) -> (Self, &[u8]) {
+        let (input, buf) = Bytes::from_compact(buf, len);
+        let mut slice = input.as_ref();
+        let tx = Self::decode(&mut slice).expect("valid compact claim aggregate tx");
+        (tx, buf)
+    }
+}
+
 // --- OpTypedTransaction ---
 
 impl Compact for OpTypedTransaction {
@@ -180,6 +201,9 @@ impl Compact for OpTypedTransaction {
                 tx.to_compact(buf);
             }
             Self::PostExec(tx) => {
+                tx.to_compact(buf);
+            }
+            Self::ClaimAggregate(tx) => {
                 tx.to_compact(buf);
             }
         }
@@ -213,6 +237,10 @@ impl Compact for OpTypedTransaction {
                 let (tx, buf) = TxPostExec::from_compact(buf, buf.len());
                 (Self::PostExec(tx), buf)
             }
+            OpTxType::ClaimAggregate => {
+                let (tx, buf) = TxClaimAggregate::from_compact(buf, buf.len());
+                (Self::ClaimAggregate(tx), buf)
+            }
         }
     }
 }
@@ -226,7 +254,7 @@ impl Envelope for OpTxEnvelope {
             Self::Eip2930(tx) => tx.signature(),
             Self::Eip1559(tx) => tx.signature(),
             Self::Eip7702(tx) => tx.signature(),
-            Self::Deposit(_) | Self::PostExec(_) => {
+            Self::Deposit(_) | Self::PostExec(_) | Self::ClaimAggregate(_) => {
                 const DEPOSIT_SIG: Signature = Signature::new(U256::ZERO, U256::ZERO, false);
                 &DEPOSIT_SIG
             }
@@ -259,6 +287,9 @@ impl ToTxCompact for OpTxEnvelope {
                 tx.inner().to_compact(buf);
             }
             Self::PostExec(tx) => {
+                tx.inner().to_compact(buf);
+            }
+            Self::ClaimAggregate(tx) => {
                 tx.inner().to_compact(buf);
             }
         };
@@ -298,6 +329,10 @@ impl FromTxCompact for OpTxEnvelope {
             OpTxType::PostExec => {
                 let (tx, buf) = TxPostExec::from_compact(buf, buf.len());
                 (Self::PostExec(alloy_consensus::Sealed::new(tx)), buf)
+            }
+            OpTxType::ClaimAggregate => {
+                let (tx, buf) = TxClaimAggregate::from_compact(buf, buf.len());
+                (Self::ClaimAggregate(alloy_consensus::Sealed::new(tx)), buf)
             }
         }
     }
@@ -380,6 +415,7 @@ impl From<CompactOpReceipt> for OpReceipt {
             OpTxType::Eip1559 => Self::Eip1559(receipt),
             OpTxType::Eip7702 => Self::Eip7702(receipt),
             OpTxType::PostExec => Self::PostExec(receipt),
+            OpTxType::ClaimAggregate => Self::ClaimAggregate(receipt),
             OpTxType::Deposit => Self::Deposit(crate::OpDepositReceipt {
                 inner: receipt,
                 deposit_nonce: compact.deposit_nonce,

@@ -8,7 +8,7 @@ use alloy_evm::{
     revm::context::BlockEnv,
 };
 use alloy_op_evm::{
-    OpBlockExecutionCtx, OpBlockExecutorFactory,
+    OpBlockExecutionCtx, OpBlockExecutorFactory, SharedClaimAggregateVerifier,
     block::{OpTxEnv, receipt_builder::OpReceiptBuilder},
 };
 use alloy_primitives::B256;
@@ -46,6 +46,8 @@ where
     receipt_builder: R,
     /// The executor.
     inner: Option<StatelessL2Builder<'a, P, H, Evm, R>>,
+    /// Verifier for claim aggregate transactions, handed to each stateless builder.
+    claim_aggregate_verifier: Option<SharedClaimAggregateVerifier>,
 }
 
 impl<'a, P, H, Evm, R> KonaExecutor<'a, P, H, Evm, R>
@@ -63,7 +65,25 @@ where
         receipt_builder: R,
         inner: Option<StatelessL2Builder<'a, P, H, Evm, R>>,
     ) -> Self {
-        Self { rollup_config, trie_provider, trie_hinter, evm_factory, receipt_builder, inner }
+        Self {
+            rollup_config,
+            trie_provider,
+            trie_hinter,
+            evm_factory,
+            receipt_builder,
+            inner,
+            claim_aggregate_verifier: None,
+        }
+    }
+
+    /// Sets the verifier for claim aggregate transactions.
+    #[must_use]
+    pub fn with_claim_aggregate_verifier(
+        mut self,
+        verifier: Option<SharedClaimAggregateVerifier>,
+    ) -> Self {
+        self.claim_aggregate_verifier = verifier;
+        self
     }
 }
 
@@ -98,14 +118,17 @@ where
     /// Since the L2 block executor is stateless, on an update to the safe head,
     /// a new executor is created with the updated header.
     fn update_safe_head(&mut self, header: Sealed<Header>) {
-        self.inner = Some(StatelessL2Builder::new(
-            self.rollup_config,
-            self.evm_factory.clone(),
-            self.receipt_builder.clone(),
-            self.trie_provider.clone(),
-            self.trie_hinter.clone(),
-            header,
-        ));
+        self.inner = Some(
+            StatelessL2Builder::new(
+                self.rollup_config,
+                self.evm_factory.clone(),
+                self.receipt_builder.clone(),
+                self.trie_provider.clone(),
+                self.trie_hinter.clone(),
+                header,
+            )
+            .with_claim_aggregate_verifier(self.claim_aggregate_verifier.clone()),
+        );
     }
 
     /// Execute the given payload attributes.

@@ -21,7 +21,7 @@ use core::{
     ops::Deref,
 };
 use op_alloy_consensus::{
-    OpPooledTransaction, OpTxEnvelope, OpTypedTransaction, TxDeposit, TxPostExec,
+    OpPooledTransaction, OpTxEnvelope, OpTypedTransaction, TxClaimAggregate, TxDeposit, TxPostExec,
 };
 #[cfg(any(test, feature = "reth-codec"))]
 use reth_primitives_traits::{
@@ -67,6 +67,7 @@ impl OpTransactionSigned {
             OpTypedTransaction::Eip7702(tx) => &mut tx.input,
             OpTypedTransaction::Deposit(tx) => &mut tx.input,
             OpTypedTransaction::PostExec(tx) => &mut tx.input,
+            OpTypedTransaction::ClaimAggregate(tx) => &mut tx.input,
         }
     }
 
@@ -115,6 +116,7 @@ impl SignerRecoverable for OpTransactionSigned {
             // Post-exec transactions are unsigned system transactions. They use a
             // canonical zero-address signer rather than a cryptographic signature.
             OpTypedTransaction::PostExec(tx) => Ok(tx.signer_address()),
+            OpTypedTransaction::ClaimAggregate(tx) => Ok(tx.signer_address()),
             _ => {
                 let Self { transaction, signature, .. } = self;
                 let signature_hash = signature_hash(transaction);
@@ -131,6 +133,7 @@ impl SignerRecoverable for OpTransactionSigned {
             // Post-exec transactions are unsigned system transactions. They use a
             // canonical zero-address signer rather than a cryptographic signature.
             OpTypedTransaction::PostExec(tx) => Ok(tx.signer_address()),
+            OpTypedTransaction::ClaimAggregate(tx) => Ok(tx.signer_address()),
             _ => {
                 let Self { transaction, signature, .. } = self;
                 let signature_hash = signature_hash(transaction);
@@ -147,6 +150,7 @@ impl SignerRecoverable for OpTransactionSigned {
             // Post-exec transactions are system transactions. They use a
             // canonical zero-address signer rather than a cryptographic signature.
             OpTypedTransaction::PostExec(tx) => Ok(tx.signer_address()),
+            OpTypedTransaction::ClaimAggregate(tx) => Ok(tx.signer_address()),
             OpTypedTransaction::Legacy(tx) => {
                 tx.encode_for_signing(buf);
                 recover_signer_unchecked(&self.signature, keccak256(buf))
@@ -203,6 +207,7 @@ impl From<OpTxEnvelope> for OpTransactionSigned {
             OpTxEnvelope::Eip7702(tx) => tx.into(),
             OpTxEnvelope::Deposit(tx) => tx.into(),
             OpTxEnvelope::PostExec(tx) => tx.into(),
+            OpTxEnvelope::ClaimAggregate(tx) => tx.into(),
         }
     }
 }
@@ -221,6 +226,13 @@ impl From<Sealed<TxPostExec>> for OpTransactionSigned {
     }
 }
 
+impl From<Sealed<TxClaimAggregate>> for OpTransactionSigned {
+    fn from(value: Sealed<TxClaimAggregate>) -> Self {
+        let (tx, hash) = value.into_parts();
+        Self::new(OpTypedTransaction::ClaimAggregate(tx), TxClaimAggregate::signature(), hash)
+    }
+}
+
 impl From<OpTransactionSigned> for OpTxEnvelope {
     fn from(value: OpTransactionSigned) -> Self {
         let (tx, signature, hash) = value.into_parts();
@@ -231,6 +243,7 @@ impl From<OpTransactionSigned> for OpTxEnvelope {
             OpTypedTransaction::Deposit(tx) => Sealed::new_unchecked(tx, hash).into(),
             OpTypedTransaction::Eip7702(tx) => Signed::new_unchecked(tx, signature, hash).into(),
             OpTypedTransaction::PostExec(tx) => Sealed::new_unchecked(tx, hash).into(),
+            OpTypedTransaction::ClaimAggregate(tx) => Sealed::new_unchecked(tx, hash).into(),
         }
     }
 }
@@ -284,6 +297,9 @@ impl Encodable2718 for OpTransactionSigned {
             }
             OpTypedTransaction::Deposit(deposit_tx) => deposit_tx.eip2718_encoded_length(),
             OpTypedTransaction::PostExec(post_exec_tx) => post_exec_tx.eip2718_encoded_length(),
+            OpTypedTransaction::ClaimAggregate(claim_aggregate_tx) => {
+                claim_aggregate_tx.eip2718_encoded_length()
+            }
         }
     }
 
@@ -304,6 +320,9 @@ impl Encodable2718 for OpTransactionSigned {
             OpTypedTransaction::Eip7702(set_code_tx) => set_code_tx.eip2718_encode(signature, out),
             OpTypedTransaction::Deposit(deposit_tx) => deposit_tx.encode_2718(out),
             OpTypedTransaction::PostExec(post_exec_tx) => post_exec_tx.encode_2718(out),
+            OpTypedTransaction::ClaimAggregate(claim_aggregate_tx) => {
+                claim_aggregate_tx.encode_2718(out)
+            }
         }
     }
 }
@@ -337,6 +356,10 @@ impl Decodable2718 for OpTransactionSigned {
             op_alloy_consensus::OpTxType::PostExec => Ok(Self::new_unhashed(
                 OpTypedTransaction::PostExec(TxPostExec::rlp_decode(buf)?),
                 TxPostExec::signature(),
+            )),
+            op_alloy_consensus::OpTxType::ClaimAggregate => Ok(Self::new_unhashed(
+                OpTypedTransaction::ClaimAggregate(TxClaimAggregate::rlp_decode(buf)?),
+                TxClaimAggregate::signature(),
             )),
         }
     }
@@ -434,11 +457,13 @@ impl PartialEq for OpTransactionSigned {
         let self_signature = match &self.transaction {
             OpTypedTransaction::Deposit(_) => TxDeposit::signature(),
             OpTypedTransaction::PostExec(_) => TxPostExec::signature(),
+            OpTypedTransaction::ClaimAggregate(_) => TxClaimAggregate::signature(),
             _ => self.signature,
         };
         let other_signature = match &other.transaction {
             OpTypedTransaction::Deposit(_) => TxDeposit::signature(),
             OpTypedTransaction::PostExec(_) => TxPostExec::signature(),
+            OpTypedTransaction::ClaimAggregate(_) => TxClaimAggregate::signature(),
             _ => other.signature,
         };
 
@@ -453,6 +478,7 @@ impl Hash for OpTransactionSigned {
         match &self.transaction {
             OpTypedTransaction::Deposit(_) => TxDeposit::signature().hash(state),
             OpTypedTransaction::PostExec(_) => TxPostExec::signature().hash(state),
+            OpTypedTransaction::ClaimAggregate(_) => TxClaimAggregate::signature().hash(state),
             _ => self.signature.hash(state),
         }
         self.transaction.hash(state);
@@ -474,6 +500,9 @@ impl reth_codecs::Compact for OpTransactionSigned {
         let sig_bit = match &self.transaction {
             OpTypedTransaction::Deposit(_) => TxDeposit::signature().to_compact(buf) as u8,
             OpTypedTransaction::PostExec(_) => TxPostExec::signature().to_compact(buf) as u8,
+            OpTypedTransaction::ClaimAggregate(_) => {
+                TxClaimAggregate::signature().to_compact(buf) as u8
+            }
             _ => self.signature.to_compact(buf) as u8,
         };
         let zstd_bit = self.transaction.input().len() >= 32;
@@ -540,6 +569,7 @@ impl<'a> arbitrary::Arbitrary<'a> for OpTransactionSigned {
         let signature = match &transaction {
             OpTypedTransaction::Deposit(_) => TxDeposit::signature(),
             OpTypedTransaction::PostExec(_) => TxPostExec::signature(),
+            OpTypedTransaction::ClaimAggregate(_) => TxClaimAggregate::signature(),
             _ => signature,
         };
 
@@ -554,7 +584,9 @@ fn signature_hash(tx: &OpTypedTransaction) -> B256 {
         OpTypedTransaction::Eip2930(tx) => tx.signature_hash(),
         OpTypedTransaction::Eip1559(tx) => tx.signature_hash(),
         OpTypedTransaction::Eip7702(tx) => tx.signature_hash(),
-        OpTypedTransaction::Deposit(_) | OpTypedTransaction::PostExec(_) => B256::ZERO,
+        OpTypedTransaction::Deposit(_) |
+        OpTypedTransaction::PostExec(_) |
+        OpTypedTransaction::ClaimAggregate(_) => B256::ZERO,
     }
 }
 
@@ -576,6 +608,15 @@ mod tests {
                         .collect(),
                 });
                 assert!(post_exec.input.len() >= 33);
+            }
+            OpTypedTransaction::ClaimAggregate(claim_aggregate) => {
+                *claim_aggregate = op_alloy_consensus::build_claim_aggregate_tx(
+                    1,
+                    B256::ZERO,
+                    vec![op_alloy_consensus::ProofClaim::default()],
+                    vec![0; 33].into(),
+                );
+                assert!(claim_aggregate.input.len() >= 33);
             }
             _ => *tx.input_mut() = vec![0; 33].into(),
         }

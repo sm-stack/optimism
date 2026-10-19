@@ -44,7 +44,8 @@ impl InMemorySize for OpReceipt {
             Self::Eip2930(receipt) |
             Self::Eip1559(receipt) |
             Self::Eip7702(receipt) |
-            Self::PostExec(receipt) => receipt.size(),
+            Self::PostExec(receipt) |
+            Self::ClaimAggregate(receipt) => receipt.size(),
             Self::Deposit(receipt) => receipt.size(),
         }
     }
@@ -59,6 +60,7 @@ impl InMemorySize for OpTypedTransaction {
             Self::Eip7702(tx) => tx.size(),
             Self::Deposit(tx) => tx.size(),
             Self::PostExec(tx) => tx.size(),
+            Self::ClaimAggregate(tx) => tx.size(),
         }
     }
 }
@@ -83,6 +85,9 @@ impl InMemorySize for OpTxEnvelope {
             Self::Eip7702(tx) => tx.size(),
             Self::Deposit(tx) => core::mem::size_of::<alloy_primitives::B256>() + tx.inner().size(),
             Self::PostExec(tx) => {
+                core::mem::size_of::<alloy_primitives::B256>() + tx.inner().size()
+            }
+            Self::ClaimAggregate(tx) => {
                 core::mem::size_of::<alloy_primitives::B256>() + tx.inner().size()
             }
         }

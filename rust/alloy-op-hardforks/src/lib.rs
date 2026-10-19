@@ -322,6 +322,15 @@ pub trait OpHardforks: EthereumHardforks {
     fn is_interop_active_at_timestamp(&self, timestamp: u64) -> bool {
         self.is_lagoon_active_at_timestamp(timestamp)
     }
+
+    /// Returns `true` if SP1 proof claims (claim aggregate transactions and the
+    /// `ProofClaimRegistry` predeploy) are active at the given block timestamp.
+    ///
+    /// The single activation gate for the feature. Currently tied to
+    /// [`Self::is_lagoon_active_at_timestamp`] until the feature has its own fork time.
+    fn is_proof_claims_active_at_timestamp(&self, timestamp: u64) -> bool {
+        self.is_lagoon_active_at_timestamp(timestamp)
+    }
 }
 
 /// A type allowing to configure activation [`ForkCondition`]s for a given list of

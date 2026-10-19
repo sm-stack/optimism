@@ -226,6 +226,7 @@ impl ExecutorError {
                                 OpBlockExecutionError::TransactionDaFootprintAboveGasLimit { .. } |
                                 OpBlockExecutionError::UnexpectedNonDepositTxInForkActivationBlock |
                                 OpBlockExecutionError::InvalidPostExecPayload(_) |
+                                OpBlockExecutionError::InvalidClaimAggregate(_) |
                                 OpBlockExecutionError::PostExecSettlementUnderflow { .. } => true,
                                 OpBlockExecutionError::LoadCacheAccount |
                                 OpBlockExecutionError::GetJovianDaFootprintScalar(_) => false,

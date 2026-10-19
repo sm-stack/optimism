@@ -483,7 +483,8 @@ where
             OpTxType::Eip2930 |
             OpTxType::Eip1559 |
             OpTxType::Eip7702 |
-            OpTxType::PostExec => self.discard_and_surface_error(evm, error),
+            OpTxType::PostExec |
+            OpTxType::ClaimAggregate => self.discard_and_surface_error(evm, error),
         }
     }
 

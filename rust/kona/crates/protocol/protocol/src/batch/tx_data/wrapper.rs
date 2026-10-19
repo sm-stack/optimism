@@ -39,6 +39,28 @@ impl Decodable for SpanBatchPostExecTransactionData {
     }
 }
 
+/// Claim aggregate (`0x7C`) transaction data within a span batch: the RLP-encoded payload, the same
+/// layout as [`SpanBatchPostExecTransactionData`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SpanBatchClaimAggregateTransactionData {
+    /// RLP-encoded claim aggregate payload bytes.
+    pub data: Bytes,
+}
+
+impl Encodable for SpanBatchClaimAggregateTransactionData {
+    fn encode(&self, out: &mut dyn alloy_rlp::BufMut) {
+        out.put_slice(self.data.as_ref());
+    }
+}
+
+impl Decodable for SpanBatchClaimAggregateTransactionData {
+    fn decode(r: &mut &[u8]) -> Result<Self, alloy_rlp::Error> {
+        let SpanBatchPostExecTransactionData { data } =
+            SpanBatchPostExecTransactionData::decode(r)?;
+        Ok(Self { data })
+    }
+}
+
 /// The typed transaction data for a transaction within a span batch.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SpanBatchTransactionData {
@@ -52,6 +74,8 @@ pub enum SpanBatchTransactionData {
     Eip7702(SpanBatchEip7702TransactionData),
     /// `PostExec` transaction data.
     PostExec(SpanBatchPostExecTransactionData),
+    /// Claim aggregate transaction data.
+    ClaimAggregate(SpanBatchClaimAggregateTransactionData),
 }
 
 impl Encodable for SpanBatchTransactionData {
@@ -74,6 +98,10 @@ impl Encodable for SpanBatchTransactionData {
             }
             Self::PostExec(data) => {
                 out.put_u8(u8::from(OpTxType::PostExec));
+                data.encode(out);
+            }
+            Self::ClaimAggregate(data) => {
+                out.put_u8(u8::from(OpTxType::ClaimAggregate));
                 data.encode(out);
             }
         }
@@ -148,6 +176,7 @@ impl SpanBatchTransactionData {
             Self::Eip1559(_) => OpTxType::Eip1559,
             Self::Eip7702(_) => OpTxType::Eip7702,
             Self::PostExec(_) => OpTxType::PostExec,
+            Self::ClaimAggregate(_) => OpTxType::ClaimAggregate,
         }
     }
 
@@ -172,6 +201,9 @@ impl SpanBatchTransactionData {
             OpTxType::PostExec => {
                 Ok(Self::PostExec(SpanBatchPostExecTransactionData::decode(&mut &b[1..])?))
             }
+            OpTxType::ClaimAggregate => Ok(Self::ClaimAggregate(
+                SpanBatchClaimAggregateTransactionData::decode(&mut &b[1..])?,
+            )),
             OpTxType::Legacy | OpTxType::Deposit => {
                 Err(alloy_rlp::Error::Custom("Invalid transaction type"))
             }
@@ -211,7 +243,7 @@ impl SpanBatchTransactionData {
                 };
                 TxEnvelope::Eip7702(data.to_signed_tx(nonce, gas, addr, chain_id, signature)?)
             }
-            Self::PostExec(_) => {
+            Self::PostExec(_) | Self::ClaimAggregate(_) => {
                 return Err(SpanBatchError::Decoding(SpanDecodingError::InvalidTransactionData));
             }
         })
@@ -231,6 +263,12 @@ impl SpanBatchTransactionData {
             Self::PostExec(data) => {
                 let mut out = Vec::with_capacity(1 + data.data.len());
                 out.push(u8::from(OpTxType::PostExec));
+                out.extend_from_slice(data.data.as_ref());
+                Ok(out)
+            }
+            Self::ClaimAggregate(data) => {
+                let mut out = Vec::with_capacity(1 + data.data.len());
+                out.push(u8::from(OpTxType::ClaimAggregate));
                 out.extend_from_slice(data.data.as_ref());
                 Ok(out)
             }

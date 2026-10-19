@@ -5,7 +5,8 @@ use alloy_eips::{Encodable2718, eip2930::AccessList, eip7702::SignedAuthorizatio
 use alloy_primitives::{Address, B256, BlockHash, Bytes, ChainId, TxKind, U256};
 use alloy_serde::OtherFields;
 use op_alloy_consensus::{
-    OpTransaction, OpTxEnvelope, TxDeposit, TxPostExec, transaction::OpTransactionInfo,
+    OpTransaction, OpTxEnvelope, TxClaimAggregate, TxDeposit, TxPostExec,
+    transaction::OpTransactionInfo,
 };
 use serde::{Deserialize, Serialize};
 
@@ -42,7 +43,7 @@ impl<T: OpTransaction + TransactionTrait> Transaction<T> {
         let effective_gas_price = if tx.is_deposit() {
             // Deposits have no gas price, but the legacy RPC shape reports an explicit zero.
             Some(0)
-        } else if tx.as_post_exec().is_some() {
+        } else if tx.as_post_exec().is_some() || tx.as_claim_aggregate().is_some() {
             // PostExec has no fee fields: https://specs.optimism.io/protocol/lagoon/post-exec.html#generic-transaction-interface-representation
             None
         } else {
@@ -224,6 +225,10 @@ impl<T: OpTransaction> OpTransaction for Transaction<T> {
 
     fn as_post_exec(&self) -> Option<&Sealed<TxPostExec>> {
         self.inner.as_ref().as_post_exec()
+    }
+
+    fn as_claim_aggregate(&self) -> Option<&Sealed<TxClaimAggregate>> {
+        self.inner.as_ref().as_claim_aggregate()
     }
 }
 

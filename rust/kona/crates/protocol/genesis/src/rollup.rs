@@ -272,6 +272,17 @@ impl RollupConfig {
         self.is_lagoon_active(timestamp)
     }
 
+    /// Returns true if SP1 proof claims (claim aggregate transactions) are active at the given
+    /// timestamp.
+    ///
+    /// The single activation gate for the feature, matching op-node's `IsProofClaims` and
+    /// op-reth's `is_proof_claims_active_at_timestamp`. Tied to Lagoon until the feature has its
+    /// own fork time.
+    #[must_use]
+    pub fn is_proof_claims_active(&self, timestamp: u64) -> bool {
+        self.is_lagoon_active(timestamp)
+    }
+
     /// Returns true if Jovian is active at the given timestamp.
     pub fn is_jovian_active(&self, timestamp: u64) -> bool {
         self.hardforks.jovian_time.is_some_and(|t| timestamp >= t) ||

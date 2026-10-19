@@ -38,6 +38,9 @@ pub use eip1559::{
 pub mod post_exec;
 pub use post_exec::*;
 
+pub mod claim_aggregate;
+pub use claim_aggregate::*;
+
 mod source;
 pub use source::*;
 

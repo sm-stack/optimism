@@ -98,4 +98,8 @@ pub enum SpanDecodingError {
     /// spec fixes for it.
     #[error("Invalid post-exec transaction span batch slots")]
     InvalidPostExecSlots,
+    /// A claim aggregate (`0x7C`) transaction does not carry the zero span batch slot values
+    /// fixed for unsigned system transactions.
+    #[error("Invalid claim aggregate transaction span batch slots")]
+    InvalidClaimAggregateSlots,
 }
