@@ -5,8 +5,8 @@
 //! - `KONA_SP1_ELF_DIR`: holds `proof-aggregation-elf`.
 //! - `PROOF_AGGREGATOR_FIXTURE_DIR`: holds `proof.bin` (bincode `SP1Proof::Compressed`) and
 //!   `public_values.bin` for a statement, and `program-elf`, the ELF that produced the proof. The
-//!   test writes the program's `verifying_key.bin` there, and the aggregate it
-//!   proved (`aggregate_proof.bin`, `aggregation_vkey_hash.txt`) for tests that need one ready.
+//!   test writes the program's `verifying_key.bin` there, and the aggregate it proved
+//!   (`aggregate_proof.bin`, `aggregation_vkey_hash.txt`) for tests that need one ready.
 
 #![allow(missing_docs)]
 
