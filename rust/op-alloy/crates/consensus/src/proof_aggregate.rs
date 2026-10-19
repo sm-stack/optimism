@@ -633,6 +633,20 @@ mod tests {
         assert!(ProofAggregatePayload::from_rlp_bytes(&raw).is_err());
     }
 
+    /// Golden vector shared with the `proof-aggregation` SP1 guest
+    /// (`single_statement_commitment_vector`): the commitment its public values carry.
+    #[test]
+    fn statements_commitment_golden_vector() {
+        let statement = ProofStatement {
+            vkey_hash: B256::repeat_byte(0x11),
+            public_values_digest: B256::repeat_byte(0x22),
+        };
+        assert_eq!(
+            statements_commitment(&[statement]),
+            b256!("0x3e92e0db88d6afea9edc4eedf62fffa4d92bcdfc310dccbe943747fe8302e871")
+        );
+    }
+
     #[test]
     fn commitment_is_concatenated_keccak() {
         let statements = sample().payload.statements;

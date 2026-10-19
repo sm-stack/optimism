@@ -8141,6 +8141,28 @@ dependencies = [
 ]
 
 [[package]]
+name = "kona-sp1-proof-aggregator"
+version = "0.0.1"
+dependencies = [
+ "alloy-op-evm",
+ "alloy-primitives",
+ "anyhow",
+ "bincode 2.0.1",
+ "clap",
+ "jsonrpsee",
+ "kona-sp1-elfs",
+ "op-alloy-consensus",
+ "op-sp1-proofs",
+ "serde",
+ "sha2 0.10.9",
+ "sp1-hypercube",
+ "sp1-sdk",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
 name = "kona-sp1-super-range-executor"
 version = "0.0.1"
 dependencies = [
@@ -9971,6 +9993,7 @@ dependencies = [
  "alloy-primitives",
  "bincode 2.0.1",
  "slop-algebra",
+ "sp1-hypercube",
  "sp1-primitives",
  "sp1-verifier",
 ]

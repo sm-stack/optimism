@@ -1,0 +1,37 @@
+[package]
+name = "kona-sp1-proof-aggregator"
+description = "Proves proof aggregates over the statement proofs queued on an op-reth sequencer"
+version = "0.0.1"
+publish = false
+license.workspace = true
+edition.workspace = true
+
+[lints]
+workspace = true
+
+[[bin]]
+name = "proof-aggregator"
+path = "src/main.rs"
+
+[dependencies]
+kona-sp1-elfs.workspace = true
+op-alloy-consensus = { workspace = true, features = ["serde"] }
+op-sp1-proofs.workspace = true
+
+sp1-sdk.workspace = true
+sp1-hypercube.workspace = true
+
+alloy-primitives = { workspace = true, features = ["serde"] }
+anyhow.workspace = true
+bincode = { workspace = true, features = ["alloc", "serde"] }
+clap = { workspace = true, features = ["derive", "env"] }
+jsonrpsee = { workspace = true, features = ["http-client"] }
+serde = { workspace = true, features = ["derive", "std"] }
+sha2.workspace = true
+tokio = { workspace = true, features = ["full"] }
+tracing.workspace = true
+tracing-subscriber = { workspace = true, features = ["env-filter", "fmt"] }
+
+[dev-dependencies]
+op-alloy-consensus = { workspace = true, features = ["serde"] }
+alloy-op-evm.workspace = true

@@ -33,6 +33,10 @@ pub struct StatementProof {
     pub public_values: Bytes,
     /// The SP1 compressed proof, bincode-encoded `SP1Proof`.
     pub proof: Bytes,
+    /// The proven program's verifying key, bincode-encoded `SP1VerifyingKey`. The aggregation
+    /// program needs the full key, not just `statement.vkey_hash`, to verify the proof
+    /// recursively.
+    pub verifying_key: Bytes,
 }
 
 /// A verified aggregate proof waiting to be included in a block.
@@ -147,6 +151,7 @@ mod tests {
             },
             public_values: Bytes::from(vec![byte]),
             proof: Bytes::from(vec![byte; 4]),
+            verifying_key: Bytes::from(vec![byte; 2]),
         }
     }
 

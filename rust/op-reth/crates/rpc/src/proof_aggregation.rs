@@ -27,6 +27,9 @@ pub trait ProofStatementApi {
     /// Verifies `proof`, an SP1 compressed proof of the program `vkey_hash` committing to
     /// `public_values`, and queues it for aggregation. Returns the statement id.
     ///
+    /// `verifying_key` is the program's bincode-encoded `SP1VerifyingKey`, which must hash to
+    /// `vkey_hash`: the aggregation program needs the full key to verify the proof recursively.
+    ///
     /// The statement must also be submitted to the `ProofRegistry`, which charges its fee; an
     /// aggregate covering a statement the registry does not hold pending is not included.
     #[method(name = "submitStatementProof")]
@@ -35,6 +38,7 @@ pub trait ProofStatementApi {
         vkey_hash: B256,
         public_values: Bytes,
         proof: Bytes,
+        verifying_key: Bytes,
     ) -> RpcResult<B256>;
 }
 
@@ -92,7 +96,10 @@ impl ProofStatementApiServer for OpProofAggregationApi {
         vkey_hash: B256,
         public_values: Bytes,
         proof: Bytes,
+        verifying_key: Bytes,
     ) -> RpcResult<B256> {
+        op_sp1_proofs::decode_verifying_key(&verifying_key, vkey_hash)
+            .map_err(|reason| invalid_params(format!("verifying key rejected: {reason}")))?;
         let statement = ProofStatement {
             vkey_hash,
             public_values_digest: B256::from(<[u8; 32]>::from(Sha256::digest(&public_values))),
@@ -103,7 +110,12 @@ impl ProofStatementApiServer for OpProofAggregationApi {
         })
         .await?;
         self.pool
-            .insert_statement_proof(StatementProof { statement, public_values, proof })
+            .insert_statement_proof(StatementProof {
+                statement,
+                public_values,
+                proof,
+                verifying_key,
+            })
             .map_err(|err| internal_error(err.to_string()))
     }
 }
@@ -139,7 +151,12 @@ mod tests {
     async fn rejects_invalid_statement_proof() {
         let api = OpProofAggregationApi::new(ProofAggregationPool::default());
         let err = api
-            .submit_statement_proof(B256::ZERO, Bytes::from_static(b"pv"), Bytes::from_static(b"x"))
+            .submit_statement_proof(
+                B256::ZERO,
+                Bytes::from_static(b"pv"),
+                Bytes::from_static(b"x"),
+                Bytes::from_static(b"vk"),
+            )
             .await
             .unwrap_err();
         assert_eq!(err.code(), INVALID_PARAMS_CODE);

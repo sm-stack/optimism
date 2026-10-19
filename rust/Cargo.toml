@@ -28,6 +28,7 @@ members = [
   "kona/sp1/crates/host",
   "kona/sp1/crates/super-range-executor",
   "kona/sp1/crates/proposer",
+  "kona/sp1/crates/proof-aggregator",
   "kona/sp1/crates/zkvm-canary",
 
   # Op-Alloy
@@ -513,6 +514,7 @@ sp1-sdk = { version = "6.8.1", default-features = false, features = [
 ] }
 sp1-verifier = { version = "6.8.1", default-features = false, features = ["full"] }
 sp1-primitives = { version = "6.8.1", default-features = false }
+sp1-hypercube = { version = "6.8.1", default-features = false }
 slop-algebra = { version = "6.8.1", default-features = false }
 
 # ==================== ASYNC ====================

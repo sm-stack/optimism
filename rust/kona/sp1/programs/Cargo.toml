@@ -3,6 +3,7 @@ members = [
   "log-commitment",
   "super-range",
   "super-aggregation",
+  "proof-aggregation",
   "tests/bls12-381-check",
 ]
 resolver = "2"

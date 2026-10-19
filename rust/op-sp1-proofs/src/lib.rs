@@ -11,6 +11,7 @@ use alloy_op_evm::ProofAggregateVerifier;
 use alloy_primitives::B256;
 use core::fmt;
 use slop_algebra::{AbstractField, PrimeField32};
+use sp1_hypercube::{HashableKey, SP1VerifyingKey};
 use sp1_primitives::SP1Field;
 use sp1_verifier::{SP1Proof, compressed::SP1CompressedVerifier};
 use std::sync::OnceLock;
@@ -39,6 +40,23 @@ pub fn vkey_hash_from_words(words: [u32; 8]) -> B256 {
         chunk.copy_from_slice(&word.to_be_bytes());
     }
     B256::from(out)
+}
+
+/// Decodes `vk`, a bincode-encoded `SP1VerifyingKey`, and checks that it hashes to `vkey_hash`.
+///
+/// Recursively verifying a proof inside the aggregation program takes the proven program's full
+/// verifying key, not just its digest, so statement submitters provide it.
+pub fn decode_verifying_key(vk: &[u8], vkey_hash: B256) -> Result<SP1VerifyingKey, String> {
+    let (decoded, read): (SP1VerifyingKey, usize) =
+        bincode::serde::decode_from_slice(vk, bincode::config::legacy())
+            .map_err(|err| format!("malformed verifying key: {err}"))?;
+    if read != vk.len() {
+        return Err(String::from("trailing bytes after the verifying key"));
+    }
+    if vkey_hash_from_words(decoded.hash_u32()) != vkey_hash {
+        return Err(String::from("verifying key does not hash to the statement's vkey hash"));
+    }
+    Ok(decoded)
 }
 
 /// Verifies proof aggregate proofs as SP1 compressed proofs.
@@ -136,8 +154,8 @@ mod tests {
     }
 
     /// Verifies a real SP1 compressed proof. Set `OP_SP1_PROOFS_FIXTURE_DIR` to a directory with
-    /// `proof.bin` (bincode `SP1Proof`), `public_values.bin`, and `vkey_hash.bin` (bincode
-    /// `[SP1Field; 8]`).
+    /// `proof.bin` (bincode `SP1Proof`), `public_values.bin`, `vkey_hash.bin` (bincode
+    /// `[SP1Field; 8]`) and, optionally, `verifying_key.bin` (bincode `SP1VerifyingKey`).
     #[test]
     #[ignore = "needs an SP1 compressed proof fixture"]
     fn verifies_fixture_proof() {
@@ -161,5 +179,11 @@ mod tests {
         let mut wrong_vkey = vkey_hash;
         wrong_vkey.0[31] ^= 1;
         assert!(verifier.verify_with_public_values(wrong_vkey, &public_values, &proof).is_err());
+
+        // The program's full verifying key, if the fixture has it, must hash to its vkey hash.
+        if let Ok(vk) = std::fs::read(dir.join("verifying_key.bin")) {
+            decode_verifying_key(&vk, vkey_hash).unwrap();
+            assert!(decode_verifying_key(&vk, wrong_vkey).is_err());
+        }
     }
 }

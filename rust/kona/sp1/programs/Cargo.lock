@@ -1953,6 +1953,16 @@ name = "kona-sp1-log-commitment-vkey"
 version = "0.0.1"
 
 [[package]]
+name = "kona-sp1-proof-aggregation"
+version = "0.0.1"
+dependencies = [
+ "alloy-primitives",
+ "kona-sp1-build-info",
+ "sp1-lib",
+ "sp1-zkvm",
+]
+
+[[package]]
 name = "kona-sp1-range-vkeys"
 version = "0.0.1"
 
