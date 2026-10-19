@@ -2,10 +2,15 @@
 use crate::{
     OpAttributes, OpPayloadBuilderAttributes, OpPayloadPrimitives, config::OpBuilderConfig,
     error::OpPayloadBuilderError, payload::OpBuiltPayload,
+    proof_aggregation::MAX_INCLUSION_FAILURES,
 };
 use alloy_consensus::{BlockHeader, Sealable, Transaction, Typed2718, transaction::Recovered};
 use alloy_eips::eip2718::{Decodable2718, Encodable2718};
 use alloy_evm::Evm as AlloyEvm;
+use alloy_op_evm::{
+    PROOF_REGISTRY_ADDRESS, STATEMENT_STATUS_PENDING, STATEMENT_STATUS_VERIFIED,
+    statement_status_slot,
+};
 use alloy_primitives::{Address, B256, Sealed, U256};
 use alloy_rpc_types_debug::ExecutionWitness;
 use alloy_rpc_types_engine::PayloadId;
@@ -51,7 +56,10 @@ use reth_storage_api::{
     HeaderProvider, StateProvider, StateProviderFactory, errors::ProviderError,
 };
 use reth_transaction_pool::{BestTransactionsAttributes, PoolTransaction, TransactionPool};
-use revm::context::{Block, BlockEnv};
+use revm::{
+    Database as _,
+    context::{Block, BlockEnv},
+};
 use std::{marker::PhantomData, sync::Arc};
 use tracing::{debug, trace, warn};
 
@@ -1046,28 +1054,72 @@ where
 
     /// Includes the oldest pending proof aggregate, if any, as the next transaction.
     ///
-    /// Must run directly after [`Self::execute_sequencer_transactions`]. The aggregate is held back
-    /// while the inclusion interval has not passed or it does not fit the DA and size limits that
-    /// also bound mempool transactions; see [`crate::proof_aggregation`] for why these are the
-    /// only bounds. A failed aggregate is discarded rather than failing the build: the usual cause
-    /// is that a previous block already included it, so the registry no longer has its statements
-    /// pending. The executor runs the failed attempt without committing, so the block is
-    /// unaffected.
-    pub fn try_include_proof_aggregate(
+    /// Must run directly after [`Self::execute_sequencer_transactions`]. Aggregates at the head of
+    /// the queue are first checked against the registry: one whose statements are all verified
+    /// was included by an earlier block and is dropped; one with only some statements still
+    /// pending can no longer be included, so it is dropped and those statements go back to wait
+    /// for aggregation.
+    ///
+    /// The aggregate is then held back while the inclusion interval has not passed or it does not
+    /// fit the DA and size limits that also bound mempool transactions; see
+    /// [`crate::proof_aggregation`] for why these are the only bounds. A failed attempt leaves the
+    /// block unaffected, as the executor commits nothing for it; after
+    /// [`MAX_INCLUSION_FAILURES`] failures the aggregate is dropped and its statements requeued.
+    pub fn try_include_proof_aggregate<Builder>(
         &self,
         info: &mut ExecutionInfo,
-        builder: &mut impl BlockBuilder<Primitives = Evm::Primitives>,
-    ) {
+        builder: &mut Builder,
+    ) where
+        Builder: BlockBuilder<Primitives = Evm::Primitives>,
+        <<Builder::Executor as BlockExecutor>::Evm as AlloyEvm>::DB: Database,
+    {
         if !self.chain_spec.is_proof_aggregation_active_at_timestamp(self.attributes().timestamp())
         {
             return;
         }
         let pool = &self.builder_config.proof_aggregation_pool;
+        let aggregate = loop {
+            let Some(aggregate) = pool.next_aggregate() else { return };
+            let ids: Vec<B256> = aggregate.statements.iter().map(|s| s.id()).collect();
+            let mut pending = Vec::with_capacity(ids.len());
+            let mut verified = 0;
+            for id in &ids {
+                let status = match builder.evm_mut().db_mut().storage(
+                    PROOF_REGISTRY_ADDRESS,
+                    U256::from_be_bytes(statement_status_slot(*id).0),
+                ) {
+                    Ok(status) => status,
+                    Err(err) => {
+                        warn!(target: "payload_builder", %err, "cannot read the proof registry, skipping proof aggregate");
+                        return;
+                    }
+                };
+                if status == STATEMENT_STATUS_PENDING {
+                    pending.push(*id);
+                } else if status == STATEMENT_STATUS_VERIFIED {
+                    verified += 1;
+                }
+            }
+            if verified == ids.len() {
+                debug!(target: "payload_builder", "proof aggregate already included, dropping");
+                pool.discard_aggregate(&aggregate);
+            } else if pending.len() != ids.len() {
+                warn!(
+                    target: "payload_builder",
+                    pending = pending.len(),
+                    statements = ids.len(),
+                    "proof aggregate covers statements no longer pending, requeueing the rest"
+                );
+                pool.requeue_statements(&aggregate, &pending);
+            } else {
+                break aggregate;
+            }
+        };
+
         let block_number = self.parent().number() + 1;
         if !pool.inclusion_allowed(block_number, self.builder_config.proof_aggregate_interval) {
             return;
         }
-        let Some(aggregate) = pool.next_aggregate() else { return };
 
         let encoded = build_proof_aggregate_tx(
             block_number,
@@ -1099,16 +1151,14 @@ where
             return;
         }
 
-        let tx = match TxTy::<Evm::Primitives>::decode_2718_exact(&encoded) {
-            Ok(tx) => Recovered::new_unchecked(tx, Address::ZERO),
-            Err(err) => {
-                warn!(target: "payload_builder", %err, "proof aggregate does not decode, discarding");
-                pool.discard_aggregate(&aggregate);
-                return;
-            }
-        };
-
-        match builder.execute_transaction(tx) {
+        let result = TxTy::<Evm::Primitives>::decode_2718_exact(&encoded)
+            .map_err(|err| err.to_string())
+            .and_then(|tx| {
+                builder
+                    .execute_transaction(Recovered::new_unchecked(tx, Address::ZERO))
+                    .map_err(|err| err.to_string())
+            });
+        match result {
             Ok(_) => {
                 info.cumulative_da_bytes_used += tx_da_size;
                 info.cumulative_uncompressed_bytes += tx_uncompressed_size;
@@ -1120,8 +1170,14 @@ where
                 );
             }
             Err(err) => {
-                warn!(target: "payload_builder", %err, "proof aggregate rejected, discarding");
-                pool.discard_aggregate(&aggregate);
+                let failures = pool.record_failure(&aggregate);
+                if failures >= MAX_INCLUSION_FAILURES {
+                    warn!(target: "payload_builder", %err, failures, "proof aggregate keeps failing, dropping it and requeueing its statements");
+                    let ids: Vec<B256> = aggregate.statements.iter().map(|s| s.id()).collect();
+                    pool.requeue_statements(&aggregate, &ids);
+                } else {
+                    warn!(target: "payload_builder", %err, failures, "proof aggregate not included, retrying in a later block");
+                }
             }
         }
     }

@@ -42,6 +42,7 @@ alloy-rlp.workspace = true
 op-alloy-rpc-types-engine = { workspace = true, features = ["serde"] }
 op-alloy-consensus = { workspace = true, features = ["serde"] }
 op-alloy-flz.workspace = true
+alloy-op-evm.workspace = true
 alloy-rpc-types-engine.workspace = true
 alloy-rpc-types-debug.workspace = true
 alloy-consensus.workspace = true

@@ -45,9 +45,13 @@ use std::{
     sync::{Arc, Mutex, MutexGuard},
 };
 
-/// Upper bound on statement proofs held at once. With the per-proof size limits below, the pool
-/// holds at most about 530 MiB.
+/// Upper bound on statement proofs held at once, both waiting for aggregation and held by queued
+/// aggregates. With the per-proof size limits below, the pool holds at most about 530 MiB.
 pub const MAX_STATEMENT_PROOFS: usize = 256;
+
+/// Failed inclusion attempts after which an aggregate is dropped and its statements go back to
+/// waiting for aggregation.
+pub const MAX_INCLUSION_FAILURES: u32 = 3;
 
 /// Upper bound on an encoded SP1 compressed proof. Compressed proofs have a fixed shape of about
 /// 1.27 MB regardless of the program.
@@ -112,14 +116,38 @@ pub enum ProofAggregationPoolError {
     AggregatesFull,
 }
 
+/// An aggregate waiting for inclusion.
+#[derive(Debug)]
+struct QueuedAggregate {
+    aggregate: PendingAggregate,
+    /// Proofs of the statements the aggregate covers, kept so the statements can be aggregated
+    /// again if the aggregate is dropped before a block includes it.
+    statement_proofs: Vec<StatementProof>,
+    /// Failed inclusion attempts so far.
+    failures: u32,
+}
+
 #[derive(Debug, Default)]
 struct Inner {
     /// Statement proofs not yet covered by a submitted aggregate, keyed by statement id.
     statement_proofs: BTreeMap<B256, StatementProof>,
     /// Aggregates in submission order.
-    aggregates: VecDeque<PendingAggregate>,
+    aggregates: VecDeque<QueuedAggregate>,
     /// Number of the last block the payload builder included an aggregate in.
     last_inclusion: Option<u64>,
+}
+
+impl Inner {
+    /// Statement proofs held, including those held by queued aggregates.
+    fn held_proofs(&self) -> usize {
+        self.statement_proofs.len() +
+            self.aggregates.iter().map(|queued| queued.statement_proofs.len()).sum::<usize>()
+    }
+
+    fn take_aggregate(&mut self, aggregate: &PendingAggregate) -> Option<QueuedAggregate> {
+        let index = self.aggregates.iter().position(|queued| &queued.aggregate == aggregate)?;
+        self.aggregates.remove(index)
+    }
 }
 
 /// Shared handle to the sequencer's proof aggregation queue. Clones share the same state: the RPC
@@ -159,7 +187,7 @@ impl ProofAggregationPool {
         if inner.statement_proofs.contains_key(&statement_id) {
             return Err(ProofAggregationPoolError::AlreadyQueued);
         }
-        if inner.statement_proofs.len() >= MAX_STATEMENT_PROOFS {
+        if inner.held_proofs() >= MAX_STATEMENT_PROOFS {
             return Err(ProofAggregationPoolError::StatementProofsFull);
         }
         Ok(())
@@ -178,7 +206,7 @@ impl ProofAggregationPool {
         if inner.statement_proofs.contains_key(&id) {
             return Err(ProofAggregationPoolError::AlreadyQueued);
         }
-        if inner.statement_proofs.len() >= MAX_STATEMENT_PROOFS {
+        if inner.held_proofs() >= MAX_STATEMENT_PROOFS {
             return Err(ProofAggregationPoolError::StatementProofsFull);
         }
         inner.statement_proofs.insert(id, proof);
@@ -199,7 +227,8 @@ impl ProofAggregationPool {
         }
     }
 
-    /// Queues a verified aggregate for inclusion and drops the statement proofs it covers.
+    /// Queues a verified aggregate for inclusion. The statement proofs it covers stop waiting for
+    /// aggregation; the aggregate keeps them until it is dropped.
     pub fn submit_aggregate(
         &self,
         aggregate: PendingAggregate,
@@ -208,25 +237,52 @@ impl ProofAggregationPool {
         if inner.aggregates.len() >= MAX_PENDING_AGGREGATES {
             return Err(ProofAggregationPoolError::AggregatesFull);
         }
-        for statement in &aggregate.statements {
-            inner.statement_proofs.remove(&statement.id());
-        }
-        inner.aggregates.push_back(aggregate);
+        let statement_proofs = aggregate
+            .statements
+            .iter()
+            .filter_map(|statement| inner.statement_proofs.remove(&statement.id()))
+            .collect();
+        inner.aggregates.push_back(QueuedAggregate { aggregate, statement_proofs, failures: 0 });
         Ok(())
     }
 
     /// Returns the oldest aggregate waiting for inclusion, leaving it queued.
     ///
-    /// An included aggregate stays queued: the payload may not become canonical. It is removed
-    /// by [`Self::discard_aggregate`] once a later block fails to include it, which is what happens
-    /// when the registry already marked its statements verified.
+    /// An included aggregate stays queued: the payload may not become canonical. The payload
+    /// builder drops it with [`Self::discard_aggregate`] once the registry shows its statements
+    /// verified.
     pub fn next_aggregate(&self) -> Option<PendingAggregate> {
-        self.lock().aggregates.front().cloned()
+        self.lock().aggregates.front().map(|queued| queued.aggregate.clone())
     }
 
-    /// Removes `aggregate` from the queue, if it is still there.
+    /// Removes `aggregate` and the statement proofs it holds from the queue, if it is still there.
     pub fn discard_aggregate(&self, aggregate: &PendingAggregate) {
-        self.lock().aggregates.retain(|queued| queued != aggregate);
+        self.lock().take_aggregate(aggregate);
+    }
+
+    /// Removes `aggregate` from the queue and puts the proofs of the statements in `still_pending`
+    /// back to wait for aggregation; the rest are dropped.
+    pub fn requeue_statements(&self, aggregate: &PendingAggregate, still_pending: &[B256]) {
+        let mut inner = self.lock();
+        let Some(queued) = inner.take_aggregate(aggregate) else { return };
+        for proof in queued.statement_proofs {
+            let id = proof.statement.id();
+            if still_pending.contains(&id) {
+                inner.statement_proofs.entry(id).or_insert(proof);
+            }
+        }
+    }
+
+    /// Records a failed attempt to include `aggregate` and returns the number of failures so far.
+    pub fn record_failure(&self, aggregate: &PendingAggregate) -> u32 {
+        let mut inner = self.lock();
+        inner.aggregates.iter_mut().find(|queued| &queued.aggregate == aggregate).map_or(
+            0,
+            |queued| {
+                queued.failures += 1;
+                queued.failures
+            },
+        )
     }
 
     /// Whether a block numbered `block_number` may include an aggregate: at least `interval` blocks
@@ -286,6 +342,54 @@ mod tests {
         assert_eq!(pool.next_aggregate(), Some(aggregate.clone()));
         pool.discard_aggregate(&aggregate);
         assert_eq!(pool.next_aggregate(), None);
+        assert_eq!(pool.lock().held_proofs(), 1);
+    }
+
+    #[test]
+    fn requeue_restores_only_pending_statements() {
+        let pool = ProofAggregationPool::default();
+        let (a, b) = (statement_proof(1), statement_proof(2));
+        pool.insert_statement_proof(a.clone()).unwrap();
+        pool.insert_statement_proof(b.clone()).unwrap();
+        let aggregate = PendingAggregate {
+            aggregation_vkey_hash: B256::repeat_byte(9),
+            statements: vec![a.statement, b.statement],
+            proof: Bytes::from_static(b"agg"),
+        };
+        pool.submit_aggregate(aggregate.clone()).unwrap();
+        assert!(pool.statement_proofs().is_empty());
+        assert_eq!(pool.lock().held_proofs(), 2, "the aggregate holds its statements' proofs");
+
+        assert_eq!(pool.record_failure(&aggregate), 1);
+        assert_eq!(pool.record_failure(&aggregate), 2);
+
+        pool.requeue_statements(&aggregate, &[b.statement.id()]);
+        assert_eq!(pool.next_aggregate(), None);
+        assert_eq!(pool.statement_proofs(), vec![b]);
+        assert_eq!(pool.record_failure(&aggregate), 0, "no longer queued");
+    }
+
+    #[test]
+    fn proofs_held_by_aggregates_count_towards_the_bound() {
+        let pool = ProofAggregationPool::default();
+        let mut statements = Vec::new();
+        for i in 0..MAX_STATEMENT_PROOFS {
+            let mut proof = statement_proof(0);
+            proof.statement.vkey_hash = B256::from(alloy_primitives::U256::from(i));
+            statements.push(proof.statement);
+            pool.insert_statement_proof(proof).unwrap();
+        }
+        pool.submit_aggregate(PendingAggregate {
+            aggregation_vkey_hash: B256::ZERO,
+            statements,
+            proof: Bytes::new(),
+        })
+        .unwrap();
+        assert!(pool.statement_proofs().is_empty());
+        assert_eq!(
+            pool.insert_statement_proof(statement_proof(1)),
+            Err(ProofAggregationPoolError::StatementProofsFull)
+        );
     }
 
     #[test]

@@ -21,6 +21,9 @@ pub const PROOF_AGGREGATE_SYSTEM_CALLER: Address =
 /// aggregate has verified it yet. Only pending statements can be verified.
 pub const STATEMENT_STATUS_PENDING: U256 = U256::from_limbs([1, 0, 0, 0]);
 
+/// `ProofRegistry.StatementStatus.Verified`: an aggregate covering the statement was included.
+pub const STATEMENT_STATUS_VERIFIED: U256 = U256::from_limbs([2, 0, 0, 0]);
+
 /// Storage slot of `ProofRegistry._statementStatus[statement_id]`, a `StatementStatus` held in the
 /// mapping at slot 0.
 pub fn statement_status_slot(statement_id: B256) -> B256 {

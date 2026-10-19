@@ -57,7 +57,7 @@ pub mod post_exec;
 pub mod proof_aggregate;
 pub use proof_aggregate::{
     PROOF_REGISTRY_ADDRESS, ProofAggregateVerifier, STATEMENT_STATUS_PENDING,
-    SharedProofAggregateVerifier, statement_status_slot,
+    STATEMENT_STATUS_VERIFIED, SharedProofAggregateVerifier, statement_status_slot,
 };
 
 /// The OP EVM context type.
