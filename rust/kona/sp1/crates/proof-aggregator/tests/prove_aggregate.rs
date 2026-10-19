@@ -5,7 +5,8 @@
 //! - `KONA_SP1_ELF_DIR`: holds `proof-aggregation-elf`.
 //! - `PROOF_AGGREGATOR_FIXTURE_DIR`: holds `proof.bin` (bincode `SP1Proof::Compressed`) and
 //!   `public_values.bin` for a statement, and `program-elf`, the ELF that produced the proof. The
-//!   test writes the program's `verifying_key.bin` there.
+//!   test writes the program's `verifying_key.bin` there, and the aggregate it
+//!   proved (`aggregate_proof.bin`, `aggregation_vkey_hash.txt`) for tests that need one ready.
 
 #![allow(missing_docs)]
 
@@ -51,6 +52,9 @@ async fn aggregate_proof_verifies_against_statements_commitment() {
     let aggregation_vkey_hash = vkey_hash_from_words(agg_pk.verifying_key().hash_u32());
     let proof = prover.prove(&agg_pk, stdin).compressed().await.unwrap();
     let proof: Bytes = encode_proof(&proof.proof).unwrap();
+
+    fs::write(dir.join("aggregate_proof.bin"), &proof).unwrap();
+    fs::write(dir.join("aggregation_vkey_hash.txt"), aggregation_vkey_hash.to_string()).unwrap();
 
     let commitment = statements_commitment(&statements);
     let verifier = Sp1ProofAggregateVerifier::new();
