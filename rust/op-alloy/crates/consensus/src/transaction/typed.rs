@@ -1,5 +1,5 @@
 pub use crate::transaction::envelope::OpTypedTransaction;
-use crate::{OpTxEnvelope, OpTxType, TxClaimAggregate, TxDeposit, TxPostExec};
+use crate::{OpTxEnvelope, OpTxType, TxDeposit, TxPostExec, TxProofAggregate};
 use alloy_consensus::{
     EthereumTypedTransaction, SignableTransaction, Signed, TxEip1559, TxEip2930, TxEip7702,
     TxLegacy, Typed2718, TypedTransaction, error::ValueError, transaction::RlpEcdsaEncodableTx,
@@ -43,9 +43,9 @@ impl From<TxPostExec> for OpTypedTransaction {
     }
 }
 
-impl From<TxClaimAggregate> for OpTypedTransaction {
-    fn from(tx: TxClaimAggregate) -> Self {
-        Self::ClaimAggregate(tx)
+impl From<TxProofAggregate> for OpTypedTransaction {
+    fn from(tx: TxProofAggregate) -> Self {
+        Self::ProofAggregate(tx)
     }
 }
 
@@ -58,7 +58,7 @@ impl From<OpTxEnvelope> for OpTypedTransaction {
             OpTxEnvelope::Eip7702(tx) => Self::Eip7702(tx.strip_signature()),
             OpTxEnvelope::Deposit(tx) => Self::Deposit(tx.into_inner()),
             OpTxEnvelope::PostExec(tx) => Self::PostExec(tx.into_inner()),
-            OpTxEnvelope::ClaimAggregate(tx) => Self::ClaimAggregate(tx.into_inner()),
+            OpTxEnvelope::ProofAggregate(tx) => Self::ProofAggregate(tx.into_inner()),
         }
     }
 }
@@ -81,7 +81,7 @@ impl From<OpTypedTransaction> for alloy_rpc_types_eth::TransactionRequest {
             OpTypedTransaction::Eip7702(tx) => tx.into(),
             OpTypedTransaction::Deposit(tx) => tx.into(),
             OpTypedTransaction::PostExec(tx) => tx.into(),
-            OpTypedTransaction::ClaimAggregate(tx) => tx.into(),
+            OpTypedTransaction::ProofAggregate(tx) => tx.into(),
         }
     }
 }
@@ -96,7 +96,7 @@ impl OpTypedTransaction {
             Self::Eip7702(_) => OpTxType::Eip7702,
             Self::Deposit(_) => OpTxType::Deposit,
             Self::PostExec(_) => OpTxType::PostExec,
-            Self::ClaimAggregate(_) => OpTxType::ClaimAggregate,
+            Self::ProofAggregate(_) => OpTxType::ProofAggregate,
         }
     }
 
@@ -110,7 +110,7 @@ impl OpTypedTransaction {
             Self::Eip1559(tx) => Some(tx.signature_hash()),
             Self::Eip7702(tx) => Some(tx.signature_hash()),
             // Deposit and PostExec are system transactions with no signature hash.
-            Self::Deposit(_) | Self::PostExec(_) | Self::ClaimAggregate(_) => None,
+            Self::Deposit(_) | Self::PostExec(_) | Self::ProofAggregate(_) => None,
         }
     }
 
@@ -154,10 +154,10 @@ impl OpTypedTransaction {
         }
     }
 
-    /// Return the inner claim aggregate transaction if it exists.
-    pub const fn claim_aggregate(&self) -> Option<&TxClaimAggregate> {
+    /// Return the inner proof aggregate transaction if it exists.
+    pub const fn proof_aggregate(&self) -> Option<&TxProofAggregate> {
         match self {
-            Self::ClaimAggregate(tx) => Some(tx),
+            Self::ProofAggregate(tx) => Some(tx),
             _ => None,
         }
     }
@@ -179,7 +179,7 @@ impl OpTypedTransaction {
             Self::Eip7702(tx) => tx.tx_hash(signature),
             Self::Deposit(tx) => tx.tx_hash(),
             Self::PostExec(tx) => tx.tx_hash(),
-            Self::ClaimAggregate(tx) => tx.tx_hash(),
+            Self::ProofAggregate(tx) => tx.tx_hash(),
         }
     }
 
@@ -219,9 +219,9 @@ impl OpTypedTransaction {
                 tx,
                 "PostExec transactions cannot be converted to ethereum transaction",
             )),
-            tx @ Self::ClaimAggregate(_) => Err(ValueError::new(
+            tx @ Self::ProofAggregate(_) => Err(ValueError::new(
                 tx,
-                "ClaimAggregate transactions cannot be converted to ethereum transaction",
+                "ProofAggregate transactions cannot be converted to ethereum transaction",
             )),
         }
     }
@@ -236,7 +236,7 @@ impl RlpEcdsaEncodableTx for OpTypedTransaction {
             Self::Eip7702(tx) => tx.rlp_encoded_fields_length(),
             Self::Deposit(tx) => tx.rlp_encoded_fields_length(),
             Self::PostExec(tx) => tx.rlp_encoded_fields_length(),
-            Self::ClaimAggregate(tx) => tx.rlp_encoded_fields_length(),
+            Self::ProofAggregate(tx) => tx.rlp_encoded_fields_length(),
         }
     }
 
@@ -248,7 +248,7 @@ impl RlpEcdsaEncodableTx for OpTypedTransaction {
             Self::Eip7702(tx) => tx.rlp_encode_fields(out),
             Self::Deposit(tx) => tx.rlp_encode_fields(out),
             Self::PostExec(tx) => tx.rlp_encode_fields(out),
-            Self::ClaimAggregate(tx) => tx.rlp_encode_fields(out),
+            Self::ProofAggregate(tx) => tx.rlp_encode_fields(out),
         }
     }
 
@@ -260,7 +260,7 @@ impl RlpEcdsaEncodableTx for OpTypedTransaction {
             Self::Eip7702(tx) => tx.eip2718_encode_with_type(signature, tx.ty(), out),
             Self::Deposit(tx) => tx.encode_2718(out),
             Self::PostExec(tx) => tx.encode_2718(out),
-            Self::ClaimAggregate(tx) => tx.encode_2718(out),
+            Self::ProofAggregate(tx) => tx.encode_2718(out),
         }
     }
 
@@ -272,7 +272,7 @@ impl RlpEcdsaEncodableTx for OpTypedTransaction {
             Self::Eip7702(tx) => tx.eip2718_encode(signature, out),
             Self::Deposit(tx) => tx.encode_2718(out),
             Self::PostExec(tx) => tx.encode_2718(out),
-            Self::ClaimAggregate(tx) => tx.encode_2718(out),
+            Self::ProofAggregate(tx) => tx.encode_2718(out),
         }
     }
 
@@ -284,7 +284,7 @@ impl RlpEcdsaEncodableTx for OpTypedTransaction {
             Self::Eip7702(tx) => tx.network_encode_with_type(signature, tx.ty(), out),
             Self::Deposit(tx) => tx.network_encode(out),
             Self::PostExec(tx) => tx.network_encode(out),
-            Self::ClaimAggregate(tx) => tx.network_encode(out),
+            Self::ProofAggregate(tx) => tx.network_encode(out),
         }
     }
 
@@ -296,7 +296,7 @@ impl RlpEcdsaEncodableTx for OpTypedTransaction {
             Self::Eip7702(tx) => tx.network_encode(signature, out),
             Self::Deposit(tx) => tx.network_encode(out),
             Self::PostExec(tx) => tx.network_encode(out),
-            Self::ClaimAggregate(tx) => tx.network_encode(out),
+            Self::ProofAggregate(tx) => tx.network_encode(out),
         }
     }
 
@@ -308,7 +308,7 @@ impl RlpEcdsaEncodableTx for OpTypedTransaction {
             Self::Eip7702(tx) => tx.tx_hash_with_type(signature, tx.ty()),
             Self::Deposit(tx) => tx.tx_hash(),
             Self::PostExec(tx) => tx.tx_hash(),
-            Self::ClaimAggregate(tx) => tx.tx_hash(),
+            Self::ProofAggregate(tx) => tx.tx_hash(),
         }
     }
 
@@ -320,7 +320,7 @@ impl RlpEcdsaEncodableTx for OpTypedTransaction {
             Self::Eip7702(tx) => tx.tx_hash(signature),
             Self::Deposit(tx) => tx.tx_hash(),
             Self::PostExec(tx) => tx.tx_hash(),
-            Self::ClaimAggregate(tx) => tx.tx_hash(),
+            Self::ProofAggregate(tx) => tx.tx_hash(),
         }
     }
 }
@@ -332,7 +332,7 @@ impl SignableTransaction<Signature> for OpTypedTransaction {
             Self::Eip2930(tx) => tx.set_chain_id(chain_id),
             Self::Eip1559(tx) => tx.set_chain_id(chain_id),
             Self::Eip7702(tx) => tx.set_chain_id(chain_id),
-            Self::Deposit(_) | Self::PostExec(_) | Self::ClaimAggregate(_) => {}
+            Self::Deposit(_) | Self::PostExec(_) | Self::ProofAggregate(_) => {}
         }
     }
 
@@ -342,7 +342,7 @@ impl SignableTransaction<Signature> for OpTypedTransaction {
             Self::Eip2930(tx) => tx.encode_for_signing(out),
             Self::Eip1559(tx) => tx.encode_for_signing(out),
             Self::Eip7702(tx) => tx.encode_for_signing(out),
-            Self::Deposit(_) | Self::PostExec(_) | Self::ClaimAggregate(_) => {}
+            Self::Deposit(_) | Self::PostExec(_) | Self::ProofAggregate(_) => {}
         }
     }
 
@@ -352,7 +352,7 @@ impl SignableTransaction<Signature> for OpTypedTransaction {
             Self::Eip2930(tx) => tx.payload_len_for_signature(),
             Self::Eip1559(tx) => tx.payload_len_for_signature(),
             Self::Eip7702(tx) => tx.payload_len_for_signature(),
-            Self::Deposit(_) | Self::PostExec(_) | Self::ClaimAggregate(_) => 0,
+            Self::Deposit(_) | Self::PostExec(_) | Self::ProofAggregate(_) => 0,
         }
     }
 

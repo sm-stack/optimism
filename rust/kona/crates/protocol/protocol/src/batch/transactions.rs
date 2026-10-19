@@ -3,8 +3,8 @@
 
 use super::varint::read_uvarint;
 use crate::{
-    MAX_SPAN_BATCH_ELEMENTS, SpanBatchBits, SpanBatchClaimAggregateTransactionData, SpanBatchError,
-    SpanBatchPostExecTransactionData, SpanBatchTransactionData, SpanDecodingError,
+    MAX_SPAN_BATCH_ELEMENTS, SpanBatchBits, SpanBatchError, SpanBatchPostExecTransactionData,
+    SpanBatchProofAggregateTransactionData, SpanBatchTransactionData, SpanDecodingError,
 };
 use alloc::vec::Vec;
 use alloy_consensus::{Transaction, TxEnvelope};
@@ -99,18 +99,18 @@ impl SpanBatchTransactionParts {
                 None,
                 OpTxType::PostExec,
             ),
-            OpTxEnvelope::ClaimAggregate(tx) => (
-                SpanBatchTransactionData::ClaimAggregate(SpanBatchClaimAggregateTransactionData {
+            OpTxEnvelope::ProofAggregate(tx) => (
+                SpanBatchTransactionData::ProofAggregate(SpanBatchProofAggregateTransactionData {
                     data: tx.input.clone().into(),
                 }),
-                // Claim aggregate transactions are unsigned, so they take the same all-zero
+                // Proof aggregate transactions are unsigned, so they take the same all-zero
                 // placeholder slots as PostExec.
                 Signature::new(U256::ZERO, U256::ZERO, false),
                 None,
                 0,
                 0,
                 None,
-                OpTxType::ClaimAggregate,
+                OpTxType::ProofAggregate,
             ),
             OpTxEnvelope::Deposit(_) => {
                 return Err(SpanBatchError::Decoding(SpanDecodingError::InvalidTransactionData));
@@ -405,13 +405,13 @@ impl SpanBatchTransactions {
     /// A violation invalidates the whole span batch: these slots are positional across the span,
     /// so it cannot be attributed to the one block whose transaction carries it.
     ///
-    /// Claim aggregate (`0x7C`) transactions are unsigned system transactions too, and the same
+    /// Proof aggregate (`0x7C`) transactions are unsigned system transactions too, and the same
     /// zero-slot rule applies to them for the same reason.
     pub fn check_post_exec_slots(&self) -> Result<(), SpanBatchError> {
         for (idx, tx_type) in self.tx_types.iter().enumerate() {
             let kind = match tx_type {
                 OpTxType::PostExec => SpanDecodingError::InvalidPostExecSlots,
-                OpTxType::ClaimAggregate => SpanDecodingError::InvalidClaimAggregateSlots,
+                OpTxType::ProofAggregate => SpanDecodingError::InvalidProofAggregateSlots,
                 _ => continue,
             };
             let err = || SpanBatchError::Decoding(kind.clone());
@@ -494,7 +494,7 @@ impl SpanBatchTransactions {
                     .set_bit(self.legacy_tx_count as usize, parts.chain_id.is_some());
                 self.legacy_tx_count += 1;
             }
-            if !matches!(parts.tx_type, OpTxType::PostExec | OpTxType::ClaimAggregate) &&
+            if !matches!(parts.tx_type, OpTxType::PostExec | OpTxType::ProofAggregate) &&
                 parts.chain_id.is_some_and(|id| id != chain_id)
             {
                 return Err(SpanBatchError::Decoding(SpanDecodingError::InvalidTransactionData));
@@ -673,11 +673,11 @@ mod tests {
         assert_eq!(full_txs, vec![buf]);
     }
 
-    fn claim_aggregate_tx_bytes() -> Vec<u8> {
-        let tx: OpTxEnvelope = op_alloy_consensus::build_claim_aggregate_tx(
+    fn proof_aggregate_tx_bytes() -> Vec<u8> {
+        let tx: OpTxEnvelope = op_alloy_consensus::build_proof_aggregate_tx(
             42,
             alloy_primitives::B256::repeat_byte(0xaa),
-            vec![op_alloy_consensus::ProofClaim::default()],
+            vec![op_alloy_consensus::ProofStatement::default()],
             Bytes::from_static(b"proof"),
         )
         .into();
@@ -687,11 +687,11 @@ mod tests {
     }
 
     #[test]
-    fn test_span_batch_transactions_add_claim_aggregate_tx_roundtrip() {
-        let buf = claim_aggregate_tx_bytes();
+    fn test_span_batch_transactions_add_proof_aggregate_tx_roundtrip() {
+        let buf = proof_aggregate_tx_bytes();
         let mut span_batch_txs = SpanBatchTransactions::default();
         assert_eq!(span_batch_txs.add_txs(vec![Bytes::from(buf.clone())], 1), Ok(()));
-        assert_eq!(span_batch_txs.tx_types, vec![OpTxType::ClaimAggregate]);
+        assert_eq!(span_batch_txs.tx_types, vec![OpTxType::ProofAggregate]);
         assert!(span_batch_txs.tx_tos.is_empty());
         assert_eq!(span_batch_txs.zero_to_bits.get_bit(0), Some(1));
         assert_eq!(span_batch_txs.check_post_exec_slots(), Ok(()));
@@ -699,11 +699,11 @@ mod tests {
     }
 
     #[test]
-    fn test_check_claim_aggregate_slots_rejects_tampered_slots() {
-        let err = || SpanBatchError::Decoding(SpanDecodingError::InvalidClaimAggregateSlots);
+    fn test_check_proof_aggregate_slots_rejects_tampered_slots() {
+        let err = || SpanBatchError::Decoding(SpanDecodingError::InvalidProofAggregateSlots);
         let txs = || {
             let mut txs = SpanBatchTransactions::default();
-            txs.add_txs(vec![Bytes::from(claim_aggregate_tx_bytes())], 1).unwrap();
+            txs.add_txs(vec![Bytes::from(proof_aggregate_tx_bytes())], 1).unwrap();
             txs
         };
 

@@ -8,7 +8,7 @@ use alloy_evm::{
     revm::context::BlockEnv,
 };
 use alloy_op_evm::{
-    OpBlockExecutionCtx, OpBlockExecutorFactory, SharedClaimAggregateVerifier,
+    OpBlockExecutionCtx, OpBlockExecutorFactory, SharedProofAggregateVerifier,
     block::{OpTxEnv, receipt_builder::OpReceiptBuilder},
 };
 use alloy_primitives::B256;
@@ -46,8 +46,8 @@ where
     receipt_builder: R,
     /// The executor.
     inner: Option<StatelessL2Builder<'a, P, H, Evm, R>>,
-    /// Verifier for claim aggregate transactions, handed to each stateless builder.
-    claim_aggregate_verifier: Option<SharedClaimAggregateVerifier>,
+    /// Verifier for proof aggregate transactions, handed to each stateless builder.
+    proof_aggregate_verifier: Option<SharedProofAggregateVerifier>,
 }
 
 impl<'a, P, H, Evm, R> KonaExecutor<'a, P, H, Evm, R>
@@ -72,17 +72,17 @@ where
             evm_factory,
             receipt_builder,
             inner,
-            claim_aggregate_verifier: None,
+            proof_aggregate_verifier: None,
         }
     }
 
-    /// Sets the verifier for claim aggregate transactions.
+    /// Sets the verifier for proof aggregate transactions.
     #[must_use]
-    pub fn with_claim_aggregate_verifier(
+    pub fn with_proof_aggregate_verifier(
         mut self,
-        verifier: Option<SharedClaimAggregateVerifier>,
+        verifier: Option<SharedProofAggregateVerifier>,
     ) -> Self {
-        self.claim_aggregate_verifier = verifier;
+        self.proof_aggregate_verifier = verifier;
         self
     }
 }
@@ -127,7 +127,7 @@ where
                 self.trie_hinter.clone(),
                 header,
             )
-            .with_claim_aggregate_verifier(self.claim_aggregate_verifier.clone()),
+            .with_proof_aggregate_verifier(self.proof_aggregate_verifier.clone()),
         );
     }
 

@@ -44,9 +44,9 @@ pub enum OpReceipt<T = Log> {
     /// Post-exec receipt
     #[cfg_attr(feature = "serde", serde(rename = "0x7d", alias = "0x7D"))]
     PostExec(Receipt<T>),
-    /// Claim aggregate receipt
+    /// Proof aggregate receipt
     #[cfg_attr(feature = "serde", serde(rename = "0x7c", alias = "0x7C"))]
-    ClaimAggregate(Receipt<T>),
+    ProofAggregate(Receipt<T>),
     /// Deposit receipt
     #[cfg_attr(feature = "serde", serde(rename = "0x7e", alias = "0x7E"))]
     Deposit(OpDepositReceipt<T>),
@@ -61,7 +61,7 @@ impl<T> OpReceipt<T> {
             Self::Eip1559(_) => OpTxType::Eip1559,
             Self::Eip7702(_) => OpTxType::Eip7702,
             Self::PostExec(_) => OpTxType::PostExec,
-            Self::ClaimAggregate(_) => OpTxType::ClaimAggregate,
+            Self::ProofAggregate(_) => OpTxType::ProofAggregate,
             Self::Deposit(_) => OpTxType::Deposit,
         }
     }
@@ -74,7 +74,7 @@ impl<T> OpReceipt<T> {
             Self::Eip1559(receipt) |
             Self::Eip7702(receipt) |
             Self::PostExec(receipt) |
-            Self::ClaimAggregate(receipt) => receipt,
+            Self::ProofAggregate(receipt) => receipt,
             Self::Deposit(receipt) => &receipt.inner,
         }
     }
@@ -87,7 +87,7 @@ impl<T> OpReceipt<T> {
             Self::Eip1559(receipt) |
             Self::Eip7702(receipt) |
             Self::PostExec(receipt) |
-            Self::ClaimAggregate(receipt) => receipt,
+            Self::ProofAggregate(receipt) => receipt,
             Self::Deposit(receipt) => &mut receipt.inner,
         }
     }
@@ -100,7 +100,7 @@ impl<T> OpReceipt<T> {
             Self::Eip1559(receipt) |
             Self::Eip7702(receipt) |
             Self::PostExec(receipt) |
-            Self::ClaimAggregate(receipt) => receipt,
+            Self::ProofAggregate(receipt) => receipt,
             Self::Deposit(receipt) => receipt.inner,
         }
     }
@@ -115,7 +115,7 @@ impl<T> OpReceipt<T> {
             Self::Eip1559(receipt) => OpReceipt::Eip1559(receipt.map_logs(f)),
             Self::Eip7702(receipt) => OpReceipt::Eip7702(receipt.map_logs(f)),
             Self::PostExec(receipt) => OpReceipt::PostExec(receipt.map_logs(f)),
-            Self::ClaimAggregate(receipt) => OpReceipt::ClaimAggregate(receipt.map_logs(f)),
+            Self::ProofAggregate(receipt) => OpReceipt::ProofAggregate(receipt.map_logs(f)),
             Self::Deposit(receipt) => OpReceipt::Deposit(receipt.map_logs(f)),
         }
     }
@@ -131,7 +131,7 @@ impl<T> OpReceipt<T> {
             Self::Eip1559(receipt) |
             Self::Eip7702(receipt) |
             Self::PostExec(receipt) |
-            Self::ClaimAggregate(receipt) => receipt.rlp_encoded_fields_length_with_bloom(bloom),
+            Self::ProofAggregate(receipt) => receipt.rlp_encoded_fields_length_with_bloom(bloom),
             Self::Deposit(receipt) => receipt.rlp_encoded_fields_length_with_bloom(bloom),
         }
     }
@@ -147,7 +147,7 @@ impl<T> OpReceipt<T> {
             Self::Eip1559(receipt) |
             Self::Eip7702(receipt) |
             Self::PostExec(receipt) |
-            Self::ClaimAggregate(receipt) => receipt.rlp_encode_fields_with_bloom(bloom, out),
+            Self::ProofAggregate(receipt) => receipt.rlp_encode_fields_with_bloom(bloom, out),
             Self::Deposit(receipt) => receipt.rlp_encode_fields_with_bloom(bloom, out),
         }
     }
@@ -203,10 +203,10 @@ impl<T> OpReceipt<T> {
                     RlpDecodableReceipt::rlp_decode_with_bloom(buf)?;
                 Ok(ReceiptWithBloom { receipt: Self::PostExec(receipt), logs_bloom })
             }
-            OpTxType::ClaimAggregate => {
+            OpTxType::ProofAggregate => {
                 let ReceiptWithBloom { receipt, logs_bloom } =
                     RlpDecodableReceipt::rlp_decode_with_bloom(buf)?;
-                Ok(ReceiptWithBloom { receipt: Self::ClaimAggregate(receipt), logs_bloom })
+                Ok(ReceiptWithBloom { receipt: Self::ProofAggregate(receipt), logs_bloom })
             }
             OpTxType::Deposit => {
                 let ReceiptWithBloom { receipt, logs_bloom } =
@@ -228,7 +228,7 @@ impl<T> OpReceipt<T> {
             Self::Eip1559(receipt) |
             Self::Eip7702(receipt) |
             Self::PostExec(receipt) |
-            Self::ClaimAggregate(receipt) => {
+            Self::ProofAggregate(receipt) => {
                 receipt.status.encode(out);
                 receipt.cumulative_gas_used.encode(out);
                 receipt.logs.encode(out);
@@ -259,7 +259,7 @@ impl<T> OpReceipt<T> {
                 Self::Eip1559(receipt) |
                 Self::Eip7702(receipt) |
                 Self::PostExec(receipt) |
-                Self::ClaimAggregate(receipt) => {
+                Self::ProofAggregate(receipt) => {
                     receipt.status.length() +
                         receipt.cumulative_gas_used.length() +
                         receipt.logs.length()
@@ -301,8 +301,8 @@ impl<T> OpReceipt<T> {
             OpTxType::Eip1559 => Ok(Self::Eip1559(Receipt { status, cumulative_gas_used, logs })),
             OpTxType::Eip7702 => Ok(Self::Eip7702(Receipt { status, cumulative_gas_used, logs })),
             OpTxType::PostExec => Ok(Self::PostExec(Receipt { status, cumulative_gas_used, logs })),
-            OpTxType::ClaimAggregate => {
-                Ok(Self::ClaimAggregate(Receipt { status, cumulative_gas_used, logs }))
+            OpTxType::ProofAggregate => {
+                Ok(Self::ProofAggregate(Receipt { status, cumulative_gas_used, logs }))
             }
             OpTxType::Deposit => Ok(Self::Deposit(OpDepositReceipt {
                 inner: Receipt { status, cumulative_gas_used, logs },
@@ -450,7 +450,7 @@ impl<T: Send + Sync + Clone + Debug + Eq + AsRef<Log>> TxReceipt for OpReceipt<T
             Self::Eip1559(receipt) |
             Self::Eip7702(receipt) |
             Self::PostExec(receipt) |
-            Self::ClaimAggregate(receipt) => receipt.logs,
+            Self::ProofAggregate(receipt) => receipt.logs,
             Self::Deposit(receipt) => receipt.inner.logs,
         }
     }
@@ -492,8 +492,8 @@ impl From<super::OpReceiptEnvelope> for OpReceipt {
             super::OpReceiptEnvelope::Eip1559(receipt) => Self::Eip1559(receipt.receipt),
             super::OpReceiptEnvelope::Eip7702(receipt) => Self::Eip7702(receipt.receipt),
             super::OpReceiptEnvelope::PostExec(receipt) => Self::PostExec(receipt.receipt),
-            super::OpReceiptEnvelope::ClaimAggregate(receipt) => {
-                Self::ClaimAggregate(receipt.receipt)
+            super::OpReceiptEnvelope::ProofAggregate(receipt) => {
+                Self::ProofAggregate(receipt.receipt)
             }
             super::OpReceiptEnvelope::Deposit(receipt) => Self::Deposit(OpDepositReceipt {
                 deposit_nonce: receipt.receipt.deposit_nonce,
@@ -515,8 +515,8 @@ impl<T> From<ReceiptWithBloom<OpReceipt<T>>> for OpReceiptEnvelope<T> {
             OpReceipt::PostExec(receipt) => {
                 Self::PostExec(ReceiptWithBloom { receipt, logs_bloom })
             }
-            OpReceipt::ClaimAggregate(receipt) => {
-                Self::ClaimAggregate(ReceiptWithBloom { receipt, logs_bloom })
+            OpReceipt::ProofAggregate(receipt) => {
+                Self::ProofAggregate(ReceiptWithBloom { receipt, logs_bloom })
             }
             OpReceipt::Deposit(receipt) => Self::Deposit(ReceiptWithBloom { receipt, logs_bloom }),
         }
@@ -556,8 +556,8 @@ pub(crate) mod serde_bincode_compat {
         Eip7702(alloy_consensus::serde_bincode_compat::Receipt<'a, alloy_primitives::Log>),
         /// Post-exec receipt
         PostExec(alloy_consensus::serde_bincode_compat::Receipt<'a, alloy_primitives::Log>),
-        /// Claim aggregate receipt
-        ClaimAggregate(alloy_consensus::serde_bincode_compat::Receipt<'a, alloy_primitives::Log>),
+        /// Proof aggregate receipt
+        ProofAggregate(alloy_consensus::serde_bincode_compat::Receipt<'a, alloy_primitives::Log>),
         /// Deposit receipt
         Deposit(crate::serde_bincode_compat::OpDepositReceipt<'a, alloy_primitives::Log>),
     }
@@ -570,7 +570,7 @@ pub(crate) mod serde_bincode_compat {
                 super::OpReceipt::Eip1559(receipt) => Self::Eip1559(receipt.into()),
                 super::OpReceipt::Eip7702(receipt) => Self::Eip7702(receipt.into()),
                 super::OpReceipt::PostExec(receipt) => Self::PostExec(receipt.into()),
-                super::OpReceipt::ClaimAggregate(receipt) => Self::ClaimAggregate(receipt.into()),
+                super::OpReceipt::ProofAggregate(receipt) => Self::ProofAggregate(receipt.into()),
                 super::OpReceipt::Deposit(receipt) => Self::Deposit(receipt.into()),
             }
         }
@@ -584,7 +584,7 @@ pub(crate) mod serde_bincode_compat {
                 OpReceipt::Eip1559(receipt) => Self::Eip1559(receipt.into()),
                 OpReceipt::Eip7702(receipt) => Self::Eip7702(receipt.into()),
                 OpReceipt::PostExec(receipt) => Self::PostExec(receipt.into()),
-                OpReceipt::ClaimAggregate(receipt) => Self::ClaimAggregate(receipt.into()),
+                OpReceipt::ProofAggregate(receipt) => Self::ProofAggregate(receipt.into()),
                 OpReceipt::Deposit(receipt) => Self::Deposit(receipt.into()),
             }
         }

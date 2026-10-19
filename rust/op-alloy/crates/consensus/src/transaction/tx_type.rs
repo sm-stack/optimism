@@ -22,7 +22,7 @@ impl Display for OpTxType {
             Self::Eip7702 => write!(f, "eip7702"),
             Self::Deposit => write!(f, "deposit"),
             Self::PostExec => write!(f, "post-exec"),
-            Self::ClaimAggregate => write!(f, "claim-aggregate"),
+            Self::ProofAggregate => write!(f, "proof-aggregate"),
         }
     }
 }
@@ -36,7 +36,7 @@ impl OpTxType {
         Self::Eip7702,
         Self::Deposit,
         Self::PostExec,
-        Self::ClaimAggregate,
+        Self::ProofAggregate,
     ];
 
     /// Returns `true` if the type is [`OpTxType::Deposit`].
@@ -61,7 +61,7 @@ mod tests {
             OpTxType::Eip7702,
             OpTxType::Deposit,
             OpTxType::PostExec,
-            OpTxType::ClaimAggregate,
+            OpTxType::ProofAggregate,
         ];
         assert_eq!(OpTxType::ALL.to_vec(), all);
     }

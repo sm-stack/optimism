@@ -1,8 +1,8 @@
 use std::sync::{Arc, Mutex};
 
 use super::*;
-use crate::claim_aggregate::{ClaimAggregateVerifier, PROOF_CLAIM_REGISTRY_ADDRESS};
-use op_alloy::consensus::{OpReceiptEnvelope, ProofClaim, build_claim_aggregate_tx};
+use crate::proof_aggregate::{PROOF_REGISTRY_ADDRESS, ProofAggregateVerifier};
+use op_alloy::consensus::{OpReceiptEnvelope, ProofStatement, build_proof_aggregate_tx};
 
 /// Registry stand-in that logs its calldata (`LOG0(0, calldatasize)`) and returns `ack` as an
 /// ABI-encoded `bytes4`.
@@ -16,7 +16,7 @@ fn logging_registry(ack: [u8; 4]) -> Vec<u8> {
 }
 
 fn acking_registry() -> Vec<u8> {
-    logging_registry(crate::claim_aggregate::finalize_claims_selector())
+    logging_registry(crate::proof_aggregate::verify_statements_selector())
 }
 
 /// Registry stand-in that always reverts.
@@ -39,32 +39,42 @@ impl MockVerifier {
     }
 }
 
-impl ClaimAggregateVerifier for MockVerifier {
+impl ProofAggregateVerifier for MockVerifier {
     fn verify(
         &self,
         aggregation_vkey_hash: B256,
-        claims_commitment: B256,
+        statements_commitment: B256,
         proof: &[u8],
     ) -> Result<(), String> {
-        self.calls.lock().unwrap().push((aggregation_vkey_hash, claims_commitment, proof.to_vec()));
+        self.calls.lock().unwrap().push((
+            aggregation_vkey_hash,
+            statements_commitment,
+            proof.to_vec(),
+        ));
         if self.accept { Ok(()) } else { Err("mock rejection".to_string()) }
     }
 }
 
-fn claims() -> Vec<ProofClaim> {
+fn statements() -> Vec<ProofStatement> {
     vec![
-        ProofClaim { vkey_hash: B256::repeat_byte(1), public_values_digest: B256::repeat_byte(2) },
-        ProofClaim { vkey_hash: B256::repeat_byte(3), public_values_digest: B256::repeat_byte(4) },
+        ProofStatement {
+            vkey_hash: B256::repeat_byte(1),
+            public_values_digest: B256::repeat_byte(2),
+        },
+        ProofStatement {
+            vkey_hash: B256::repeat_byte(3),
+            public_values_digest: B256::repeat_byte(4),
+        },
     ]
 }
 
-fn aggregate_tx(block_number: u64, claims: Vec<ProofClaim>) -> Recovered<OpTxEnvelope> {
+fn aggregate_tx(block_number: u64, statements: Vec<ProofStatement>) -> Recovered<OpTxEnvelope> {
     Recovered::new_unchecked(
-        OpTxEnvelope::ClaimAggregate(
-            build_claim_aggregate_tx(
+        OpTxEnvelope::ProofAggregate(
+            build_proof_aggregate_tx(
                 block_number,
                 AGGREGATION_VKEY,
-                claims,
+                statements,
                 Bytes::from_static(b"proof"),
             )
             .seal_slow(),
@@ -73,7 +83,7 @@ fn aggregate_tx(block_number: u64, claims: Vec<ProofClaim>) -> Recovered<OpTxEnv
     )
 }
 
-/// Every fork through Lagoon active from genesis, so proof claims are active.
+/// Every fork through Lagoon active from genesis, so proof aggregation is active.
 fn all_forks_active() -> OpChainHardforks {
     let forks: Vec<(OpHardfork, ForkCondition)> = OpHardfork::op_mainnet()
         .into_iter()
@@ -83,7 +93,7 @@ fn all_forks_active() -> OpChainHardforks {
     OpChainHardforks::new(forks)
 }
 
-/// Every fork before Lagoon active from genesis, so proof claims are not.
+/// Every fork before Lagoon active from genesis, so proof aggregation is not.
 fn pre_lagoon_forks() -> OpChainHardforks {
     let forks: Vec<(OpHardfork, ForkCondition)> = OpHardfork::op_mainnet()
         .into_iter()
@@ -103,7 +113,7 @@ fn pre_lagoon_forks() -> OpChainHardforks {
 fn db_with_registry(code: &[u8]) -> State<InMemoryDB> {
     let mut db = prepare_jovian_db(DEFAULT_DA_FOOTPRINT_GAS_SCALAR);
     db.insert_account(
-        PROOF_CLAIM_REGISTRY_ADDRESS,
+        PROOF_REGISTRY_ADDRESS,
         AccountInfo::from_bytecode(Bytecode::new_raw(Bytes::copy_from_slice(code))),
     );
     db
@@ -126,44 +136,49 @@ fn executor<'a>(
         Address::ZERO,
         Inspect::Disabled,
     );
-    executor.ctx.claim_aggregate_verifier =
-        verifier.map(|verifier| verifier as SharedClaimAggregateVerifier);
+    executor.ctx.proof_aggregate_verifier =
+        verifier.map(|verifier| verifier as SharedProofAggregateVerifier);
     executor
 }
 
 fn assert_invalid(result: Result<GasOutput, BlockExecutionError>, needle: &str) {
-    let err = result.expect_err("claim aggregate must be rejected").to_string();
-    assert!(err.contains("invalid claim aggregate transaction"), "{err}");
+    let err = result.expect_err("proof aggregate must be rejected").to_string();
+    assert!(err.contains("invalid proof aggregate transaction"), "{err}");
     assert!(err.contains(needle), "expected `{needle}` in `{err}`");
 }
 
 #[test]
-fn verifies_and_finalizes_claims() {
+fn verifies_aggregate_and_records_statements() {
     let mut db = db_with_registry(&acking_registry());
     let receipt_builder = OpAlloyReceiptBuilder::default();
     let hardforks = all_forks_active();
     let verifier = MockVerifier::new(true);
     let mut executor = executor(&mut db, &receipt_builder, &hardforks, Some(verifier.clone()));
 
-    let gas = executor.execute_transaction(&aggregate_tx(0, claims())).expect("valid aggregate");
+    let gas =
+        executor.execute_transaction(&aggregate_tx(0, statements())).expect("valid aggregate");
     assert_eq!(gas.tx_gas_used(), 0);
     assert_eq!(executor.gas_used, 0);
 
     let calls = verifier.calls.lock().unwrap();
     assert_eq!(
         calls.as_slice(),
-        &[(AGGREGATION_VKEY, op_alloy::consensus::claims_commitment(&claims()), b"proof".to_vec())]
+        &[(
+            AGGREGATION_VKEY,
+            op_alloy::consensus::statements_commitment(&statements()),
+            b"proof".to_vec()
+        )]
     );
 
-    let OpReceiptEnvelope::ClaimAggregate(receipt) = &executor.receipts[0] else {
-        panic!("expected a claim aggregate receipt, got {:?}", executor.receipts[0]);
+    let OpReceiptEnvelope::ProofAggregate(receipt) = &executor.receipts[0] else {
+        panic!("expected a proof aggregate receipt, got {:?}", executor.receipts[0]);
     };
     assert!(receipt.receipt.status.coerce_status());
     assert_eq!(receipt.receipt.cumulative_gas_used, 0);
-    let ids: Vec<B256> = claims().iter().map(ProofClaim::id).collect();
+    let ids: Vec<B256> = statements().iter().map(ProofStatement::id).collect();
     let [log] = receipt.receipt.logs.as_slice() else { panic!("expected one registry log") };
-    assert_eq!(log.address, PROOF_CLAIM_REGISTRY_ADDRESS);
-    assert_eq!(log.data.data, finalize_claims_calldata(AGGREGATION_VKEY, &ids));
+    assert_eq!(log.address, PROOF_REGISTRY_ADDRESS);
+    assert_eq!(log.data.data, verify_statements_calldata(AGGREGATION_VKEY, &ids));
 }
 
 #[test]
@@ -174,7 +189,7 @@ fn rejects_proof_the_verifier_rejects() {
     let mut executor =
         executor(&mut db, &receipt_builder, &hardforks, Some(MockVerifier::new(false)));
     assert_invalid(
-        executor.execute_transaction(&aggregate_tx(0, claims())),
+        executor.execute_transaction(&aggregate_tx(0, statements())),
         "aggregate proof rejected: mock rejection",
     );
 }
@@ -186,8 +201,8 @@ fn rejects_without_a_verifier() {
     let hardforks = all_forks_active();
     let mut executor = executor(&mut db, &receipt_builder, &hardforks, None);
     assert_invalid(
-        executor.execute_transaction(&aggregate_tx(0, claims())),
-        "no claim aggregate verifier configured",
+        executor.execute_transaction(&aggregate_tx(0, statements())),
+        "no proof aggregate verifier configured",
     );
 }
 
@@ -199,8 +214,8 @@ fn rejects_before_activation() {
     let mut executor =
         executor(&mut db, &receipt_builder, &hardforks, Some(MockVerifier::new(true)));
     assert_invalid(
-        executor.execute_transaction(&aggregate_tx(0, claims())),
-        "proof claims not active",
+        executor.execute_transaction(&aggregate_tx(0, statements())),
+        "proof aggregation not active",
     );
 }
 
@@ -219,7 +234,7 @@ fn rejects_aggregate_after_a_user_tx() {
         }))
         .expect("user tx executes");
     assert_invalid(
-        executor.execute_transaction(&aggregate_tx(0, claims())),
+        executor.execute_transaction(&aggregate_tx(0, statements())),
         "does not directly follow the deposits",
     );
 }
@@ -231,8 +246,8 @@ fn rejects_a_second_aggregate() {
     let hardforks = all_forks_active();
     let mut executor =
         executor(&mut db, &receipt_builder, &hardforks, Some(MockVerifier::new(true)));
-    executor.execute_transaction(&aggregate_tx(0, claims())).expect("first aggregate");
-    assert_invalid(executor.execute_transaction(&aggregate_tx(0, claims())), "duplicate");
+    executor.execute_transaction(&aggregate_tx(0, statements())).expect("first aggregate");
+    assert_invalid(executor.execute_transaction(&aggregate_tx(0, statements())), "duplicate");
 }
 
 #[test]
@@ -243,19 +258,19 @@ fn rejects_block_number_mismatch() {
     let mut executor =
         executor(&mut db, &receipt_builder, &hardforks, Some(MockVerifier::new(true)));
     assert_invalid(
-        executor.execute_transaction(&aggregate_tx(1, claims())),
+        executor.execute_transaction(&aggregate_tx(1, statements())),
         "does not match block number",
     );
 }
 
 #[test]
-fn rejects_empty_claims() {
+fn rejects_empty_statements() {
     let mut db = db_with_registry(&acking_registry());
     let receipt_builder = OpAlloyReceiptBuilder::default();
     let hardforks = all_forks_active();
     let mut executor =
         executor(&mut db, &receipt_builder, &hardforks, Some(MockVerifier::new(true)));
-    assert_invalid(executor.execute_transaction(&aggregate_tx(0, vec![])), "lists no claims");
+    assert_invalid(executor.execute_transaction(&aggregate_tx(0, vec![])), "lists no statements");
 }
 
 #[test]
@@ -266,7 +281,7 @@ fn rejects_registry_without_code() {
     let mut executor =
         executor(&mut db, &receipt_builder, &hardforks, Some(MockVerifier::new(true)));
     assert_invalid(
-        executor.execute_transaction(&aggregate_tx(0, claims())),
+        executor.execute_transaction(&aggregate_tx(0, statements())),
         "registry did not acknowledge",
     );
 }
@@ -279,7 +294,7 @@ fn rejects_wrong_registry_acknowledgement() {
     let mut executor =
         executor(&mut db, &receipt_builder, &hardforks, Some(MockVerifier::new(true)));
     assert_invalid(
-        executor.execute_transaction(&aggregate_tx(0, claims())),
+        executor.execute_transaction(&aggregate_tx(0, statements())),
         "registry did not acknowledge",
     );
 }
@@ -292,7 +307,7 @@ fn rejects_when_the_registry_reverts() {
     let mut executor =
         executor(&mut db, &receipt_builder, &hardforks, Some(MockVerifier::new(true)));
     assert_invalid(
-        executor.execute_transaction(&aggregate_tx(0, claims())),
-        "registry rejected the claim aggregate",
+        executor.execute_transaction(&aggregate_tx(0, statements())),
+        "registry rejected the proof aggregate",
     );
 }

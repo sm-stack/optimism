@@ -238,8 +238,8 @@ impl From<OpTransactionReceipt> for OpReceiptEnvelope<alloy_primitives::Log> {
             OpReceiptEnvelope::PostExec(receipt) => {
                 Self::PostExec(convert_standard_receipt(receipt))
             }
-            OpReceiptEnvelope::ClaimAggregate(receipt) => {
-                Self::ClaimAggregate(convert_standard_receipt(receipt))
+            OpReceiptEnvelope::ProofAggregate(receipt) => {
+                Self::ProofAggregate(convert_standard_receipt(receipt))
             }
             OpReceiptEnvelope::Deposit(OpDepositReceiptWithBloom { logs_bloom, receipt }) => {
                 let consensus_logs = receipt.inner.logs.into_iter().map(|log| log.inner).collect();

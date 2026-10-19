@@ -28,8 +28,8 @@ var (
 	// TODO(#19432): Use this flag in the OPCM/OPD integration pipeline.
 	ZKDisputeGameFlag = common.HexToHash("0x0000000000000000000000000000000000000000000000000000000001000000")
 
-	// ProofClaimsFlag installs the ProofClaimRegistry predeploy at L2 genesis.
-	ProofClaimsFlag = common.HexToHash("0x0000000000000000000000000000000000000000000000000000000100000000")
+	// ProofAggregationFlag installs the ProofRegistry predeploy at L2 genesis.
+	ProofAggregationFlag = common.HexToHash("0x0000000000000000000000000000000000000000000000000000000100000000")
 
 	// SuperRootGamesMigrationFlag enables the super root games migration path in OPCM upgrade.
 	SuperRootGamesMigrationFlag = common.HexToHash("0x0000000000000000000000000000000000000000000000000000000010000000")

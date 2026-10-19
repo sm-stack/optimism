@@ -343,7 +343,7 @@ impl OpReceiptBuilder {
                 OpReceipt::Eip1559(receipt) => OpReceipt::Eip1559(map_logs(receipt)),
                 OpReceipt::Eip7702(receipt) => OpReceipt::Eip7702(map_logs(receipt)),
                 OpReceipt::PostExec(receipt) => OpReceipt::PostExec(map_logs(receipt)),
-                OpReceipt::ClaimAggregate(receipt) => OpReceipt::ClaimAggregate(map_logs(receipt)),
+                OpReceipt::ProofAggregate(receipt) => OpReceipt::ProofAggregate(map_logs(receipt)),
                 OpReceipt::Deposit(receipt) => OpReceipt::Deposit(receipt.map_inner(map_logs)),
             };
             mapped_receipt.into_with_bloom()

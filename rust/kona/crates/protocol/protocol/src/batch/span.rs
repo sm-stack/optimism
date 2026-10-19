@@ -514,11 +514,11 @@ impl SpanBatch {
                         warn!(target: "batch_span", "PostExec transactions are not supported pre-Lagoon. tx_index: {}", i);
                         return BatchValidity::Drop(BatchDropReason::PostExecPreLagoon);
                     }
-                    Ok(OpTxType::ClaimAggregate)
-                        if !cfg.is_proof_claims_active(batch.timestamp) =>
+                    Ok(OpTxType::ProofAggregate)
+                        if !cfg.is_proof_aggregation_active(batch.timestamp) =>
                     {
-                        warn!(target: "batch_span", "claim aggregate transactions are not supported before proof claims activation. tx_index: {}", i);
-                        return BatchValidity::Drop(BatchDropReason::ClaimAggregateInactive);
+                        warn!(target: "batch_span", "proof aggregate transactions are not supported before proof aggregation activation. tx_index: {}", i);
+                        return BatchValidity::Drop(BatchDropReason::ProofAggregateInactive);
                     }
                     _ => {}
                 }

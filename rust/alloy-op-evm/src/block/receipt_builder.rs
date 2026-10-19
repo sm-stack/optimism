@@ -78,7 +78,7 @@ impl OpReceiptBuilder for OpAlloyReceiptBuilder {
                     OpTxType::Eip1559 => OpReceiptEnvelope::Eip1559(receipt),
                     OpTxType::Eip7702 => OpReceiptEnvelope::Eip7702(receipt),
                     OpTxType::PostExec => OpReceiptEnvelope::PostExec(receipt),
-                    OpTxType::ClaimAggregate => OpReceiptEnvelope::ClaimAggregate(receipt),
+                    OpTxType::ProofAggregate => OpReceiptEnvelope::ProofAggregate(receipt),
                     OpTxType::Deposit => unreachable!(),
                 })
             }

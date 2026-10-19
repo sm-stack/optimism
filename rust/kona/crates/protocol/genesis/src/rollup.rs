@@ -272,14 +272,14 @@ impl RollupConfig {
         self.is_lagoon_active(timestamp)
     }
 
-    /// Returns true if SP1 proof claims (claim aggregate transactions) are active at the given
+    /// Returns true if SP1 proof aggregation (proof aggregate transactions) are active at the given
     /// timestamp.
     ///
-    /// The single activation gate for the feature, matching op-node's `IsProofClaims` and
-    /// op-reth's `is_proof_claims_active_at_timestamp`. Tied to Lagoon until the feature has its
-    /// own fork time.
+    /// The single activation gate for the feature, matching op-node's `IsProofStatements` and
+    /// op-reth's `is_proof_aggregation_active_at_timestamp`. Tied to Lagoon until the feature has
+    /// its own fork time.
     #[must_use]
-    pub fn is_proof_claims_active(&self, timestamp: u64) -> bool {
+    pub fn is_proof_aggregation_active(&self, timestamp: u64) -> bool {
         self.is_lagoon_active(timestamp)
     }
 

@@ -45,9 +45,9 @@ abstract contract FeatureFlags {
             console.log("Setup: DEV_FEATURE__ZK_DISPUTE_GAME is enabled");
             devFeatureBitmap |= DevFeatures.ZK_DISPUTE_GAME;
         }
-        if (Config.devFeatureProofClaims()) {
-            console.log("Setup: DEV_FEATURE__PROOF_CLAIMS is enabled");
-            devFeatureBitmap |= DevFeatures.PROOF_CLAIMS;
+        if (Config.devFeatureProofAggregation()) {
+            console.log("Setup: DEV_FEATURE__PROOF_AGGREGATION is enabled");
+            devFeatureBitmap |= DevFeatures.PROOF_AGGREGATION;
         }
         if (Config.devFeatureSuperRootGamesMigration()) {
             console.log("Setup: DEV_FEATURE__SUPER_ROOT_GAMES_MIGRATION is enabled");
@@ -63,8 +63,8 @@ abstract contract FeatureFlags {
             return "DEV_FEATURE__OPTIMISM_PORTAL_INTEROP";
         } else if (_feature == DevFeatures.ZK_DISPUTE_GAME) {
             return "DEV_FEATURE__ZK_DISPUTE_GAME";
-        } else if (_feature == DevFeatures.PROOF_CLAIMS) {
-            return "DEV_FEATURE__PROOF_CLAIMS";
+        } else if (_feature == DevFeatures.PROOF_AGGREGATION) {
+            return "DEV_FEATURE__PROOF_AGGREGATION";
         } else if (_feature == DevFeatures.SUPER_ROOT_GAMES_MIGRATION) {
             return "DEV_FEATURE__SUPER_ROOT_GAMES_MIGRATION";
         } else if (_feature == Features.CUSTOM_GAS_TOKEN) {

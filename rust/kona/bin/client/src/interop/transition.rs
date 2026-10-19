@@ -149,7 +149,7 @@ where
         OpAlloyReceiptBuilder::default(),
         None,
     )
-    .with_claim_aggregate_verifier(Some(Arc::new(op_sp1_claims::Sp1ClaimAggregateVerifier::new())));
+    .with_proof_aggregate_verifier(Some(Arc::new(op_sp1_proofs::Sp1ProofAggregateVerifier::new())));
     let mut driver = Driver::new(cursor, executor, pipeline);
 
     // Run the derivation pipeline until we are able to produce the output root of the claimed

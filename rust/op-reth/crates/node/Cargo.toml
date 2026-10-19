@@ -28,7 +28,7 @@ reth-rpc-server-types.workspace = true
 reth-tasks = { workspace = true, optional = true }
 reth-trie-common.workspace = true
 reth-node-core.workspace = true
-op-sp1-claims.workspace = true
+op-sp1-proofs.workspace = true
 reth-rpc-engine-api.workspace = true
 
 reth-rpc-api.workspace = true

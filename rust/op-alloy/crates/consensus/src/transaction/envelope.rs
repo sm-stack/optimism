@@ -1,5 +1,5 @@
 use crate::{
-    OpPooledTransaction, TxClaimAggregate, TxDeposit, TxPostExec,
+    OpPooledTransaction, TxDeposit, TxPostExec, TxProofAggregate,
     transaction::{OpDepositInfo, OpTransactionInfo},
 };
 use alloy_consensus::{
@@ -40,13 +40,13 @@ pub enum OpTxEnvelope {
         deserialize_with = "crate::post_exec::serde_post_exec_tx_rpc_de"
     )]
     PostExec(Sealed<TxPostExec>),
-    /// A [`TxClaimAggregate`] tagged with type 0x7C.
+    /// A [`TxProofAggregate`] tagged with type 0x7C.
     #[envelope(ty = 0x7C)]
     #[serde(
-        serialize_with = "crate::claim_aggregate::serde_claim_aggregate_tx_rpc",
-        deserialize_with = "crate::claim_aggregate::serde_claim_aggregate_tx_rpc_de"
+        serialize_with = "crate::proof_aggregate::serde_proof_aggregate_tx_rpc",
+        deserialize_with = "crate::proof_aggregate::serde_proof_aggregate_tx_rpc_de"
     )]
-    ClaimAggregate(Sealed<TxClaimAggregate>),
+    ProofAggregate(Sealed<TxProofAggregate>),
 }
 
 /// Represents an Optimism transaction envelope.
@@ -63,8 +63,8 @@ pub trait OpTransaction {
     /// Returns `Some` if the transaction is a post-exec transaction.
     fn as_post_exec(&self) -> Option<&Sealed<TxPostExec>>;
 
-    /// Returns `Some` if the transaction is a claim aggregate transaction.
-    fn as_claim_aggregate(&self) -> Option<&Sealed<TxClaimAggregate>> {
+    /// Returns `Some` if the transaction is a proof aggregate transaction.
+    fn as_proof_aggregate(&self) -> Option<&Sealed<TxProofAggregate>> {
         None
     }
 }
@@ -82,8 +82,8 @@ impl OpTransaction for OpTxEnvelope {
         self.as_post_exec()
     }
 
-    fn as_claim_aggregate(&self) -> Option<&Sealed<TxClaimAggregate>> {
-        self.as_claim_aggregate()
+    fn as_proof_aggregate(&self) -> Option<&Sealed<TxProofAggregate>> {
+        self.as_proof_aggregate()
     }
 }
 
@@ -105,8 +105,8 @@ impl<T: OpTransaction> OpTransaction for alloy_consensus::transaction::Recovered
         self.inner().as_post_exec()
     }
 
-    fn as_claim_aggregate(&self) -> Option<&Sealed<TxClaimAggregate>> {
-        self.inner().as_claim_aggregate()
+    fn as_proof_aggregate(&self) -> Option<&Sealed<TxProofAggregate>> {
+        self.inner().as_proof_aggregate()
     }
 }
 
@@ -136,10 +136,10 @@ where
         }
     }
 
-    fn as_claim_aggregate(&self) -> Option<&Sealed<TxClaimAggregate>> {
+    fn as_proof_aggregate(&self) -> Option<&Sealed<TxProofAggregate>> {
         match self {
-            Self::BuiltIn(b) => b.as_claim_aggregate(),
-            Self::Other(t) => t.as_claim_aggregate(),
+            Self::BuiltIn(b) => b.as_proof_aggregate(),
+            Self::Other(t) => t.as_proof_aggregate(),
         }
     }
 }
@@ -202,8 +202,8 @@ impl From<Signed<OpTypedTransaction>> for OpTxEnvelope {
             }
             OpTypedTransaction::Deposit(tx) => Self::Deposit(Sealed::new_unchecked(tx, hash)),
             OpTypedTransaction::PostExec(tx) => Self::PostExec(Sealed::new_unchecked(tx, hash)),
-            OpTypedTransaction::ClaimAggregate(tx) => {
-                Self::ClaimAggregate(Sealed::new_unchecked(tx, hash))
+            OpTypedTransaction::ProofAggregate(tx) => {
+                Self::ProofAggregate(Sealed::new_unchecked(tx, hash))
             }
         }
     }
@@ -233,15 +233,15 @@ impl From<Sealed<TxPostExec>> for OpTxEnvelope {
     }
 }
 
-impl From<TxClaimAggregate> for OpTxEnvelope {
-    fn from(v: TxClaimAggregate) -> Self {
+impl From<TxProofAggregate> for OpTxEnvelope {
+    fn from(v: TxProofAggregate) -> Self {
         v.seal_slow().into()
     }
 }
 
-impl From<Sealed<TxClaimAggregate>> for OpTxEnvelope {
-    fn from(v: Sealed<TxClaimAggregate>) -> Self {
-        Self::ClaimAggregate(v)
+impl From<Sealed<TxProofAggregate>> for OpTxEnvelope {
+    fn from(v: Sealed<TxProofAggregate>) -> Self {
+        Self::ProofAggregate(v)
     }
 }
 
@@ -276,7 +276,7 @@ impl From<OpTxEnvelope> for alloy_rpc_types_eth::TransactionRequest {
             OpTxEnvelope::Eip7702(tx) => tx.into_parts().0.into(),
             OpTxEnvelope::Deposit(tx) => tx.into_inner().into(),
             OpTxEnvelope::PostExec(tx) => tx.into_inner().into(),
-            OpTxEnvelope::ClaimAggregate(tx) => tx.into_inner().into(),
+            OpTxEnvelope::ProofAggregate(tx) => tx.into_inner().into(),
             OpTxEnvelope::Legacy(tx) => tx.into_parts().0.into(),
         }
     }
@@ -332,7 +332,7 @@ impl OpTxEnvelope {
     /// Attempts to convert the envelope into the pooled variant.
     ///
     /// Returns an error if the envelope's variant is incompatible with the pooled format:
-    /// [`TxDeposit`], [`TxPostExec`] and [`TxClaimAggregate`].
+    /// [`TxDeposit`], [`TxPostExec`] and [`TxProofAggregate`].
     pub fn try_into_pooled(self) -> Result<OpPooledTransaction, ValueError<Self>> {
         match self {
             Self::Legacy(tx) => Ok(tx.into()),
@@ -345,8 +345,8 @@ impl OpTxEnvelope {
             tx @ Self::PostExec(_) => {
                 Err(ValueError::new(tx, "PostExec transactions cannot be pooled"))
             }
-            tx @ Self::ClaimAggregate(_) => {
-                Err(ValueError::new(tx, "ClaimAggregate transactions cannot be pooled"))
+            tx @ Self::ProofAggregate(_) => {
+                Err(ValueError::new(tx, "ProofAggregate transactions cannot be pooled"))
             }
         }
     }
@@ -354,7 +354,7 @@ impl OpTxEnvelope {
     /// Attempts to convert the envelope into the ethereum pooled variant.
     ///
     /// Returns an error if the envelope's variant is incompatible with the pooled format:
-    /// [`TxDeposit`], [`TxPostExec`] and [`TxClaimAggregate`].
+    /// [`TxDeposit`], [`TxPostExec`] and [`TxProofAggregate`].
     pub fn try_into_eth_pooled(
         self,
     ) -> Result<alloy_consensus::transaction::PooledTransaction, ValueError<Self>> {
@@ -378,9 +378,9 @@ impl OpTxEnvelope {
                 tx,
                 "PostExec transactions cannot be converted to ethereum transaction",
             )),
-            tx @ Self::ClaimAggregate(_) => Err(ValueError::new(
+            tx @ Self::ProofAggregate(_) => Err(ValueError::new(
                 tx,
-                "ClaimAggregate transactions cannot be converted to ethereum transaction",
+                "ProofAggregate transactions cannot be converted to ethereum transaction",
             )),
         }
     }
@@ -433,7 +433,7 @@ impl OpTxEnvelope {
             Self::Eip7702(tx) => &mut tx.tx_mut().input,
             Self::Deposit(tx) => &mut tx.inner_mut().input,
             Self::PostExec(tx) => &mut tx.inner_mut().input,
-            Self::ClaimAggregate(tx) => &mut tx.inner_mut().input,
+            Self::ProofAggregate(tx) => &mut tx.inner_mut().input,
         }
     }
 
@@ -473,10 +473,10 @@ impl OpTxEnvelope {
         matches!(self, Self::PostExec(_))
     }
 
-    /// Returns true if the transaction is a claim aggregate transaction.
+    /// Returns true if the transaction is a proof aggregate transaction.
     #[inline]
-    pub const fn is_claim_aggregate(&self) -> bool {
-        matches!(self, Self::ClaimAggregate(_))
+    pub const fn is_proof_aggregate(&self) -> bool {
+        matches!(self, Self::ProofAggregate(_))
     }
 
     /// Returns the [`TxLegacy`] variant if the transaction is a legacy transaction.
@@ -519,11 +519,11 @@ impl OpTxEnvelope {
         }
     }
 
-    /// Returns the [`TxClaimAggregate`] variant if the transaction is a claim aggregate
+    /// Returns the [`TxProofAggregate`] variant if the transaction is a proof aggregate
     /// transaction.
-    pub const fn as_claim_aggregate(&self) -> Option<&Sealed<TxClaimAggregate>> {
+    pub const fn as_proof_aggregate(&self) -> Option<&Sealed<TxProofAggregate>> {
         match self {
-            Self::ClaimAggregate(tx) => Some(tx),
+            Self::ProofAggregate(tx) => Some(tx),
             _ => None,
         }
     }
@@ -531,14 +531,14 @@ impl OpTxEnvelope {
     /// Return the reference to signature.
     ///
     /// Returns `None` for unsigned variants: [`TxDeposit`], [`TxPostExec`] and
-    /// [`TxClaimAggregate`].
+    /// [`TxProofAggregate`].
     pub const fn signature(&self) -> Option<&Signature> {
         match self {
             Self::Legacy(tx) => Some(tx.signature()),
             Self::Eip2930(tx) => Some(tx.signature()),
             Self::Eip1559(tx) => Some(tx.signature()),
             Self::Eip7702(tx) => Some(tx.signature()),
-            Self::Deposit(_) | Self::PostExec(_) | Self::ClaimAggregate(_) => None,
+            Self::Deposit(_) | Self::PostExec(_) | Self::ProofAggregate(_) => None,
         }
     }
 
@@ -551,7 +551,7 @@ impl OpTxEnvelope {
             Self::Eip7702(_) => OpTxType::Eip7702,
             Self::Deposit(_) => OpTxType::Deposit,
             Self::PostExec(_) => OpTxType::PostExec,
-            Self::ClaimAggregate(_) => OpTxType::ClaimAggregate,
+            Self::ProofAggregate(_) => OpTxType::ProofAggregate,
         }
     }
 
@@ -564,7 +564,7 @@ impl OpTxEnvelope {
             Self::Eip7702(tx) => tx.hash(),
             Self::Deposit(tx) => tx.hash_ref(),
             Self::PostExec(tx) => tx.hash_ref(),
-            Self::ClaimAggregate(tx) => tx.hash_ref(),
+            Self::ProofAggregate(tx) => tx.hash_ref(),
         }
     }
 
@@ -582,7 +582,7 @@ impl OpTxEnvelope {
             Self::Eip7702(t) => t.eip2718_encoded_length(),
             Self::Deposit(t) => t.eip2718_encoded_length(),
             Self::PostExec(t) => t.eip2718_encoded_length(),
-            Self::ClaimAggregate(t) => t.eip2718_encoded_length(),
+            Self::ProofAggregate(t) => t.eip2718_encoded_length(),
         }
     }
 }
@@ -609,7 +609,7 @@ impl alloy_consensus::transaction::SignerRecoverable for OpTxEnvelope {
             // Post-exec transactions are system transactions. They use a
             // canonical zero-address signer rather than a cryptographic signature.
             Self::PostExec(tx) => return Ok(tx.inner().signer_address()),
-            Self::ClaimAggregate(tx) => return Ok(tx.inner().signer_address()),
+            Self::ProofAggregate(tx) => return Ok(tx.inner().signer_address()),
         };
         let signature = match self {
             Self::Legacy(tx) => tx.signature(),
@@ -617,7 +617,7 @@ impl alloy_consensus::transaction::SignerRecoverable for OpTxEnvelope {
             Self::Eip1559(tx) => tx.signature(),
             Self::Eip7702(tx) => tx.signature(),
             // Deposit and PostExec are unsigned and handled via early return above.
-            Self::Deposit(_) | Self::PostExec(_) | Self::ClaimAggregate(_) => {
+            Self::Deposit(_) | Self::PostExec(_) | Self::ProofAggregate(_) => {
                 unreachable!("non-signed transactions should not be handled here")
             }
         };
@@ -638,7 +638,7 @@ impl alloy_consensus::transaction::SignerRecoverable for OpTxEnvelope {
             // Post-exec transactions are unsigned system transactions. They use a
             // canonical zero-address signer rather than a cryptographic signature.
             Self::PostExec(tx) => return Ok(tx.inner().signer_address()),
-            Self::ClaimAggregate(tx) => return Ok(tx.inner().signer_address()),
+            Self::ProofAggregate(tx) => return Ok(tx.inner().signer_address()),
         };
         let signature = match self {
             Self::Legacy(tx) => tx.signature(),
@@ -646,7 +646,7 @@ impl alloy_consensus::transaction::SignerRecoverable for OpTxEnvelope {
             Self::Eip1559(tx) => tx.signature(),
             Self::Eip7702(tx) => tx.signature(),
             // Deposit and PostExec are unsigned and handled via early return above.
-            Self::Deposit(_) | Self::PostExec(_) | Self::ClaimAggregate(_) => unreachable!(),
+            Self::Deposit(_) | Self::PostExec(_) | Self::ProofAggregate(_) => unreachable!(),
         };
         alloy_consensus::crypto::secp256k1::recover_signer_unchecked(signature, signature_hash)
     }
@@ -671,7 +671,7 @@ impl alloy_consensus::transaction::SignerRecoverable for OpTxEnvelope {
             // Deposit and PostExec are unsigned; return their canonical signer directly.
             Self::Deposit(tx) => Ok(tx.from),
             Self::PostExec(tx) => Ok(tx.inner().signer_address()),
-            Self::ClaimAggregate(tx) => Ok(tx.inner().signer_address()),
+            Self::ProofAggregate(tx) => Ok(tx.inner().signer_address()),
         }
     }
 }
@@ -679,7 +679,7 @@ impl alloy_consensus::transaction::SignerRecoverable for OpTxEnvelope {
 /// Bincode-compatible serde implementation for `OpTxEnvelope`.
 #[cfg(all(feature = "serde", feature = "serde-bincode-compat"))]
 pub mod serde_bincode_compat {
-    use crate::{TxClaimAggregate, TxPostExec, serde_bincode_compat::TxDeposit};
+    use crate::{TxPostExec, TxProofAggregate, serde_bincode_compat::TxDeposit};
     use alloy_consensus::{
         Sealed, Signed,
         transaction::serde_bincode_compat::{TxEip1559, TxEip2930, TxEip7702, TxLegacy},
@@ -733,12 +733,12 @@ pub mod serde_bincode_compat {
             /// Owned post-exec transaction data.
             transaction: TxPostExec,
         },
-        /// Claim aggregate variant.
-        ClaimAggregate {
+        /// Proof aggregate variant.
+        ProofAggregate {
             /// Precomputed hash.
             hash: B256,
-            /// Owned claim aggregate transaction data.
-            transaction: TxClaimAggregate,
+            /// Owned proof aggregate transaction data.
+            transaction: TxProofAggregate,
         },
     }
 
@@ -769,7 +769,7 @@ pub mod serde_bincode_compat {
                     hash: sealed_post_exec.seal(),
                     transaction: sealed_post_exec.inner().clone(),
                 },
-                super::OpTxEnvelope::ClaimAggregate(sealed) => Self::ClaimAggregate {
+                super::OpTxEnvelope::ProofAggregate(sealed) => Self::ProofAggregate {
                     hash: sealed.seal(),
                     transaction: sealed.inner().clone(),
                 },
@@ -798,8 +798,8 @@ pub mod serde_bincode_compat {
                 OpTxEnvelope::PostExec { hash, transaction } => {
                     Self::PostExec(Sealed::new_unchecked(transaction, hash))
                 }
-                OpTxEnvelope::ClaimAggregate { hash, transaction } => {
-                    Self::ClaimAggregate(Sealed::new_unchecked(transaction, hash))
+                OpTxEnvelope::ProofAggregate { hash, transaction } => {
+                    Self::ProofAggregate(Sealed::new_unchecked(transaction, hash))
                 }
             }
         }
@@ -858,8 +858,8 @@ pub mod serde_bincode_compat {
                     crate::TxDeposit::arbitrary(u)?,
                     B256::arbitrary(u)?,
                 )),
-                5 => super::super::OpTxEnvelope::ClaimAggregate(Sealed::new_unchecked(
-                    crate::TxClaimAggregate::arbitrary(u)?,
+                5 => super::super::OpTxEnvelope::ProofAggregate(Sealed::new_unchecked(
+                    crate::TxProofAggregate::arbitrary(u)?,
                     B256::arbitrary(u)?,
                 )),
                 _ => super::super::OpTxEnvelope::PostExec(Sealed::new_unchecked(

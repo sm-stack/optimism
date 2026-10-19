@@ -14,7 +14,7 @@
   },
   {
     "inputs": [],
-    "name": "blobGasPerClaim",
+    "name": "blobGasPerStatement",
     "outputs": [
       {
         "internalType": "uint256",
@@ -23,86 +23,6 @@
       }
     ],
     "stateMutability": "view",
-    "type": "function"
-  },
-  {
-    "inputs": [],
-    "name": "claimFee",
-    "outputs": [
-      {
-        "internalType": "uint256",
-        "name": "fee_",
-        "type": "uint256"
-      }
-    ],
-    "stateMutability": "view",
-    "type": "function"
-  },
-  {
-    "inputs": [
-      {
-        "internalType": "bytes32",
-        "name": "_vkeyHash",
-        "type": "bytes32"
-      },
-      {
-        "internalType": "bytes32",
-        "name": "_publicValuesDigest",
-        "type": "bytes32"
-      }
-    ],
-    "name": "claimId",
-    "outputs": [
-      {
-        "internalType": "bytes32",
-        "name": "",
-        "type": "bytes32"
-      }
-    ],
-    "stateMutability": "pure",
-    "type": "function"
-  },
-  {
-    "inputs": [
-      {
-        "internalType": "bytes32",
-        "name": "_claimId",
-        "type": "bytes32"
-      }
-    ],
-    "name": "claimStatus",
-    "outputs": [
-      {
-        "internalType": "enum ProofClaimRegistry.ClaimStatus",
-        "name": "",
-        "type": "uint8"
-      }
-    ],
-    "stateMutability": "view",
-    "type": "function"
-  },
-  {
-    "inputs": [
-      {
-        "internalType": "bytes32",
-        "name": "_aggregationVkeyHash",
-        "type": "bytes32"
-      },
-      {
-        "internalType": "bytes32[]",
-        "name": "_claimIds",
-        "type": "bytes32[]"
-      }
-    ],
-    "name": "finalizeClaims",
-    "outputs": [
-      {
-        "internalType": "bytes4",
-        "name": "",
-        "type": "bytes4"
-      }
-    ],
-    "stateMutability": "nonpayable",
     "type": "function"
   },
   {
@@ -172,13 +92,69 @@
     "inputs": [
       {
         "internalType": "uint256",
-        "name": "_blobGasPerClaim",
+        "name": "_blobGasPerStatement",
         "type": "uint256"
       }
     ],
-    "name": "setBlobGasPerClaim",
+    "name": "setBlobGasPerStatement",
     "outputs": [],
     "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [],
+    "name": "statementFee",
+    "outputs": [
+      {
+        "internalType": "uint256",
+        "name": "fee_",
+        "type": "uint256"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "bytes32",
+        "name": "_vkeyHash",
+        "type": "bytes32"
+      },
+      {
+        "internalType": "bytes32",
+        "name": "_publicValuesDigest",
+        "type": "bytes32"
+      }
+    ],
+    "name": "statementId",
+    "outputs": [
+      {
+        "internalType": "bytes32",
+        "name": "",
+        "type": "bytes32"
+      }
+    ],
+    "stateMutability": "pure",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "bytes32",
+        "name": "_statementId",
+        "type": "bytes32"
+      }
+    ],
+    "name": "statementStatus",
+    "outputs": [
+      {
+        "internalType": "enum ProofRegistry.StatementStatus",
+        "name": "",
+        "type": "uint8"
+      }
+    ],
+    "stateMutability": "view",
     "type": "function"
   },
   {
@@ -194,15 +170,39 @@
         "type": "bytes"
       }
     ],
-    "name": "submitClaim",
+    "name": "submitStatement",
     "outputs": [
       {
         "internalType": "bytes32",
-        "name": "claimId_",
+        "name": "statementId_",
         "type": "bytes32"
       }
     ],
     "stateMutability": "payable",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "bytes32",
+        "name": "_aggregationVkeyHash",
+        "type": "bytes32"
+      },
+      {
+        "internalType": "bytes32[]",
+        "name": "_statementIds",
+        "type": "bytes32[]"
+      }
+    ],
+    "name": "verifyStatements",
+    "outputs": [
+      {
+        "internalType": "bytes4",
+        "name": "",
+        "type": "bytes4"
+      }
+    ],
+    "stateMutability": "nonpayable",
     "type": "function"
   },
   {
@@ -237,11 +237,11 @@
       {
         "indexed": false,
         "internalType": "uint256",
-        "name": "blobGasPerClaim",
+        "name": "blobGasPerStatement",
         "type": "uint256"
       }
     ],
-    "name": "BlobGasPerClaimSet",
+    "name": "BlobGasPerStatementSet",
     "type": "event"
   },
   {
@@ -250,7 +250,7 @@
       {
         "indexed": true,
         "internalType": "bytes32",
-        "name": "claimId",
+        "name": "statementId",
         "type": "bytes32"
       },
       {
@@ -278,7 +278,7 @@
         "type": "uint256"
       }
     ],
-    "name": "ClaimSubmitted",
+    "name": "StatementSubmitted",
     "type": "event"
   },
   {
@@ -287,41 +287,41 @@
       {
         "indexed": true,
         "internalType": "bytes32",
-        "name": "claimId",
+        "name": "statementId",
         "type": "bytes32"
       }
     ],
-    "name": "ClaimVerified",
+    "name": "StatementVerified",
     "type": "event"
   },
   {
     "inputs": [],
-    "name": "ProofClaimRegistry_ClaimExists",
+    "name": "ProofRegistry_InsufficientFee",
     "type": "error"
   },
   {
     "inputs": [],
-    "name": "ProofClaimRegistry_ClaimNotPending",
+    "name": "ProofRegistry_OnlySystem",
     "type": "error"
   },
   {
     "inputs": [],
-    "name": "ProofClaimRegistry_InsufficientFee",
+    "name": "ProofRegistry_StatementExists",
     "type": "error"
   },
   {
     "inputs": [],
-    "name": "ProofClaimRegistry_OnlySystem",
+    "name": "ProofRegistry_StatementNotPending",
     "type": "error"
   },
   {
     "inputs": [],
-    "name": "ProofClaimRegistry_TransferFailed",
+    "name": "ProofRegistry_TransferFailed",
     "type": "error"
   },
   {
     "inputs": [],
-    "name": "ProofClaimRegistry_WrongAggregationProgram",
+    "name": "ProofRegistry_WrongAggregationProgram",
     "type": "error"
   },
   {

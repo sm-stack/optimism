@@ -14,7 +14,7 @@ use alloy_evm::{FromRecoveredTx, FromTxWithEncoded, IntoTxEnv};
 use alloy_op_evm::block::OpTxEnv;
 use alloy_primitives::{Address, B256, Bytes, TxKind, U256};
 use core::ops::{Deref, DerefMut};
-use op_alloy_consensus::{OpTxEnvelope, TxClaimAggregate, TxDeposit, TxPostExec};
+use op_alloy_consensus::{OpTxEnvelope, TxDeposit, TxPostExec, TxProofAggregate};
 use op_revm::{OpTransaction, transaction::deposit::DepositTransactionParts};
 use revm::context::TxEnv;
 
@@ -146,7 +146,7 @@ impl FromTxWithEncoded<OpTxEnvelope> for FpvmOpTx {
             OpTxEnvelope::Eip7702(tx) => Self::from_encoded_tx(tx, caller, encoded),
             OpTxEnvelope::Deposit(tx) => Self::from_encoded_tx(tx.inner(), caller, encoded),
             OpTxEnvelope::PostExec(tx) => Self::from_encoded_tx(tx.inner(), caller, encoded),
-            OpTxEnvelope::ClaimAggregate(tx) => Self::from_encoded_tx(tx.inner(), caller, encoded),
+            OpTxEnvelope::ProofAggregate(tx) => Self::from_encoded_tx(tx.inner(), caller, encoded),
         }
     }
 }
@@ -241,16 +241,16 @@ impl FromTxWithEncoded<TxPostExec> for FpvmOpTx {
     }
 }
 
-impl FromRecoveredTx<TxClaimAggregate> for FpvmOpTx {
-    fn from_recovered_tx(tx: &TxClaimAggregate, _sender: Address) -> Self {
+impl FromRecoveredTx<TxProofAggregate> for FpvmOpTx {
+    fn from_recovered_tx(tx: &TxProofAggregate, _sender: Address) -> Self {
         let encoded = tx.encoded_2718();
         Self::from_encoded_tx(tx, Address::ZERO, encoded.into())
     }
 }
 
-impl FromTxWithEncoded<TxClaimAggregate> for FpvmOpTx {
-    fn from_encoded_tx(tx: &TxClaimAggregate, caller: Address, encoded: Bytes) -> Self {
-        let base = alloy_op_evm::tx::claim_aggregate_tx_env(tx, caller);
+impl FromTxWithEncoded<TxProofAggregate> for FpvmOpTx {
+    fn from_encoded_tx(tx: &TxProofAggregate, caller: Address, encoded: Bytes) -> Self {
+        let base = alloy_op_evm::tx::proof_aggregate_tx_env(tx, caller);
         Self(OpTransaction { base, enveloped_tx: Some(encoded), deposit: Default::default() })
     }
 }

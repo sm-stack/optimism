@@ -54,9 +54,9 @@ pub use block::{
 
 pub mod post_exec;
 
-pub mod claim_aggregate;
-pub use claim_aggregate::{
-    ClaimAggregateVerifier, PROOF_CLAIM_REGISTRY_ADDRESS, SharedClaimAggregateVerifier,
+pub mod proof_aggregate;
+pub use proof_aggregate::{
+    PROOF_REGISTRY_ADDRESS, ProofAggregateVerifier, SharedProofAggregateVerifier,
 };
 
 /// The OP EVM context type.

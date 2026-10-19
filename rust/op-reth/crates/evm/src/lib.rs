@@ -67,8 +67,8 @@ pub mod tx;
 pub use tx::OpTx;
 
 pub use alloy_op_evm::{
-    ClaimAggregateVerifier, OpBlockExecutionCtx, OpBlockExecutorFactory, OpEvm, OpEvmFactory,
-    PostExecMode, PreRefundGasUsed, SharedClaimAggregateVerifier,
+    OpBlockExecutionCtx, OpBlockExecutorFactory, OpEvm, OpEvmFactory, PostExecMode,
+    PreRefundGasUsed, ProofAggregateVerifier, SharedProofAggregateVerifier,
     post_exec::{
         NullRefundPolicy, PostExecEvmFactoryAdapter, PostExecExecutedTx, PostExecExecutorExt,
         PostExecRefundEvent, PostExecRefundInspector, PostExecRefundKind,
@@ -93,9 +93,9 @@ pub struct OpEvmConfig<
     pub executor_factory: OpBlockExecutorFactory<R, Arc<ChainSpec>, EvmFactory>,
     /// Optimism block assembler.
     pub block_assembler: OpBlockAssembler<ChainSpec>,
-    /// Verifier for claim aggregate transactions, passed to every block execution context.
+    /// Verifier for proof aggregate transactions, passed to every block execution context.
     /// `None` rejects any block that carries one.
-    pub claim_aggregate_verifier: Option<SharedClaimAggregateVerifier>,
+    pub proof_aggregate_verifier: Option<SharedProofAggregateVerifier>,
     #[doc(hidden)]
     pub _pd: core::marker::PhantomData<N>,
 }
@@ -107,7 +107,7 @@ impl<ChainSpec, N: NodePrimitives, R: Clone, EvmFactory: Clone> Clone
         Self {
             executor_factory: self.executor_factory.clone(),
             block_assembler: self.block_assembler.clone(),
-            claim_aggregate_verifier: self.claim_aggregate_verifier.clone(),
+            proof_aggregate_verifier: self.proof_aggregate_verifier.clone(),
             _pd: self._pd,
         }
     }
@@ -131,18 +131,18 @@ impl<ChainSpec, N: NodePrimitives, R, EvmFactory> OpEvmConfig<ChainSpec, N, R, E
         Self {
             block_assembler: OpBlockAssembler::new(chain_spec.clone()),
             executor_factory: OpBlockExecutorFactory::new(receipt_builder, chain_spec, evm_factory),
-            claim_aggregate_verifier: None,
+            proof_aggregate_verifier: None,
             _pd: core::marker::PhantomData,
         }
     }
 
-    /// Sets the verifier for claim aggregate transactions.
+    /// Sets the verifier for proof aggregate transactions.
     #[must_use]
-    pub fn with_claim_aggregate_verifier(
+    pub fn with_proof_aggregate_verifier(
         mut self,
-        verifier: Option<SharedClaimAggregateVerifier>,
+        verifier: Option<SharedProofAggregateVerifier>,
     ) -> Self {
-        self.claim_aggregate_verifier = verifier;
+        self.proof_aggregate_verifier = verifier;
         self
     }
 }
@@ -235,7 +235,7 @@ where
             parent_beacon_block_root: block.header().parent_beacon_block_root(),
             extra_data: block.header().extra_data().clone(),
             post_exec_mode: post_exec_mode.unwrap_or_default(),
-            claim_aggregate_verifier: self.claim_aggregate_verifier.clone(),
+            proof_aggregate_verifier: self.proof_aggregate_verifier.clone(),
         }
     }
 
@@ -254,7 +254,7 @@ where
             parent_beacon_block_root: attributes.parent_beacon_block_root,
             extra_data: attributes.extra_data,
             post_exec_mode,
-            claim_aggregate_verifier: self.claim_aggregate_verifier.clone(),
+            proof_aggregate_verifier: self.proof_aggregate_verifier.clone(),
         }
     }
 }
@@ -433,7 +433,7 @@ where
             parent_beacon_block_root: payload.sidecar.parent_beacon_block_root(),
             extra_data: payload.payload.as_v1().extra_data.clone(),
             post_exec_mode,
-            claim_aggregate_verifier: self.claim_aggregate_verifier.clone(),
+            proof_aggregate_verifier: self.proof_aggregate_verifier.clone(),
         })
     }
 

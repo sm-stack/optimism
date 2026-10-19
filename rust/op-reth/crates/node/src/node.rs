@@ -1315,8 +1315,8 @@ where
 
     async fn build_evm(self, ctx: &BuilderContext<Node>) -> eyre::Result<Self::EVM> {
         Ok(OpEvmConfig::new(ctx.chain_spec(), OpRethReceiptBuilder::default())
-            .with_claim_aggregate_verifier(Some(Arc::new(
-                op_sp1_claims::Sp1ClaimAggregateVerifier::new(),
+            .with_proof_aggregate_verifier(Some(Arc::new(
+                op_sp1_proofs::Sp1ProofAggregateVerifier::new(),
             ))))
     }
 }

@@ -17,8 +17,8 @@ use alloy_op_hardforks::{OpChainHardforks, OpHardforks};
 use alloy_primitives::{Address, B256, Bytes, U256};
 use canyon::ensure_create2_deployer;
 use op_alloy::consensus::{
-    CLAIM_AGGREGATE_TX_TYPE_ID, OpDepositReceipt, OpTransaction as OpConsensusTransaction,
-    POST_EXEC_TX_TYPE_ID, PostExecPayload, SDMGasEntry,
+    OpDepositReceipt, OpTransaction as OpConsensusTransaction, POST_EXEC_TX_TYPE_ID,
+    PROOF_AGGREGATE_TX_TYPE_ID, PostExecPayload, SDMGasEntry,
 };
 use op_revm::{
     L1BlockInfo, OpTransaction,
@@ -40,14 +40,14 @@ use revm::{
 };
 
 use crate::{
-    claim_aggregate::{
-        CLAIM_AGGREGATE_SYSTEM_CALLER, PROOF_CLAIM_REGISTRY_ADDRESS, SharedClaimAggregateVerifier,
-        finalize_claims_calldata, is_finalize_claims_ack,
-    },
     post_exec::{
         PostExecEvm, PostExecEvmFactoryAdapter, PostExecEvmFactoryHooks, PostExecExecutedTx,
         PostExecRefundEvent, PostExecRefundPolicyFactory, PostExecTxContext, PostExecTxKind,
         noop_post_exec_result,
+    },
+    proof_aggregate::{
+        PROOF_AGGREGATE_SYSTEM_CALLER, PROOF_REGISTRY_ADDRESS, SharedProofAggregateVerifier,
+        is_verify_statements_ack, verify_statements_calldata,
     },
 };
 
@@ -371,11 +371,11 @@ pub struct OpBlockExecutionCtx {
     pub extra_data: Bytes,
     /// Canonical post-exec execution mode for this block.
     pub post_exec_mode: PostExecMode,
-    /// Verifier for claim aggregate (`0x7C`) transactions.
+    /// Verifier for proof aggregate (`0x7C`) transactions.
     ///
-    /// `None` makes any claim aggregate transaction invalidate the block, which is also what
+    /// `None` makes any proof aggregate transaction invalidate the block, which is also what
     /// happens before the feature activates.
-    pub claim_aggregate_verifier: Option<SharedClaimAggregateVerifier>,
+    pub proof_aggregate_verifier: Option<SharedProofAggregateVerifier>,
 }
 
 /// Balance patch that reconciles fee distribution with the post-refund gas used.
@@ -493,11 +493,11 @@ pub struct OpBlockExecutor<Evm, R: OpReceiptBuilder, Spec> {
     /// Block index of the first transaction this executor runs: non-zero only after
     /// [`Self::resume_at_tx_index`].
     pub first_tx_index: u64,
-    /// Whether a non-deposit transaction has executed in this block. A claim aggregate
+    /// Whether a non-deposit transaction has executed in this block. A proof aggregate
     /// transaction must directly follow the block's deposits.
     pub non_deposit_tx_seen: bool,
-    /// Whether this block's claim aggregate transaction has executed.
-    pub claim_aggregate_seen: bool,
+    /// Whether this block's proof aggregate transaction has executed.
+    pub proof_aggregate_seen: bool,
 }
 
 impl<E, R, Spec> OpBlockExecutor<E, R, Spec>
@@ -526,7 +526,7 @@ where
             refund_events_by_tx: Vec::new(),
             first_tx_index: 0,
             non_deposit_tx_seen: false,
-            claim_aggregate_seen: false,
+            proof_aggregate_seen: false,
         }
     }
 
@@ -644,9 +644,9 @@ pub enum OpBlockExecutionError {
     #[error("invalid post-exec payload: {0}")]
     InvalidPostExecPayload(String),
 
-    /// The block contained an invalid claim aggregate transaction.
-    #[error("invalid claim aggregate transaction: {0}")]
-    InvalidClaimAggregate(String),
+    /// The block contained an invalid proof aggregate transaction.
+    #[error("invalid proof aggregate transaction: {0}")]
+    InvalidProofAggregate(String),
 
     /// Canonical post-exec settlement would underflow an account balance.
     #[error("canonical post-exec settlement underflow for {address}: delta {delta}")]
@@ -694,8 +694,8 @@ where
         validation_error(OpBlockExecutionError::InvalidPostExecPayload(reason.into()))
     }
 
-    fn invalid_claim_aggregate(reason: impl Into<String>) -> BlockExecutionError {
-        validation_error(OpBlockExecutionError::InvalidClaimAggregate(reason.into()))
+    fn invalid_proof_aggregate(reason: impl Into<String>) -> BlockExecutionError {
+        validation_error(OpBlockExecutionError::InvalidProofAggregate(reason.into()))
     }
 
     fn verifier_post_exec_refund_for_tx(
@@ -1050,7 +1050,7 @@ where
         let (tx_env, tx) = tx.into_parts();
         let is_deposit = tx.tx().ty() == DEPOSIT_TRANSACTION_TYPE;
         let is_post_exec = tx.tx().ty() == POST_EXEC_TX_TYPE_ID;
-        let is_claim_aggregate = tx.tx().ty() == CLAIM_AGGREGATE_TX_TYPE_ID;
+        let is_proof_aggregate = tx.tx().ty() == PROOF_AGGREGATE_TX_TYPE_ID;
         let tx_index = self.first_tx_index + self.receipts.len() as u64;
 
         // Since Jovian, fork-activation blocks must contain only deposit transactions — before,
@@ -1072,74 +1072,79 @@ where
         let evm_gas_available = self.evm.block().gas_limit().saturating_sub(self.evm_gas_used);
         validate_block_gas(transaction_gas_limit, evm_gas_available, self.is_regolith, is_deposit)?;
 
-        if is_claim_aggregate {
-            // A claim aggregate transaction is never transacted: the executor verifies the
+        if is_proof_aggregate {
+            // A proof aggregate transaction is never transacted: the executor verifies the
             // aggregate proof, then calls the registry from the system address. Like a post-exec
             // transaction it uses no block gas.
             let timestamp = self.evm.block().timestamp().saturating_to();
-            if !self.spec.is_proof_claims_active_at_timestamp(timestamp) {
-                return Err(Self::invalid_claim_aggregate(format!(
-                    "unexpected claim aggregate tx at index {tx_index}: proof claims not active"
+            if !self.spec.is_proof_aggregation_active_at_timestamp(timestamp) {
+                return Err(Self::invalid_proof_aggregate(format!(
+                    "unexpected proof aggregate tx at index {tx_index}: proof aggregation not active"
                 )));
             }
-            if self.claim_aggregate_seen {
-                return Err(Self::invalid_claim_aggregate(format!(
-                    "duplicate claim aggregate tx at index {tx_index}"
+            if self.proof_aggregate_seen {
+                return Err(Self::invalid_proof_aggregate(format!(
+                    "duplicate proof aggregate tx at index {tx_index}"
                 )));
             }
             if self.non_deposit_tx_seen {
-                return Err(Self::invalid_claim_aggregate(format!(
-                    "claim aggregate tx at index {tx_index} does not directly follow the deposits"
+                return Err(Self::invalid_proof_aggregate(format!(
+                    "proof aggregate tx at index {tx_index} does not directly follow the deposits"
                 )));
             }
             let payload =
-                tx.tx().as_claim_aggregate().map(|tx| &tx.inner().payload).ok_or_else(|| {
-                    Self::invalid_claim_aggregate(format!(
-                        "transaction at index {tx_index} has claim aggregate type but no payload"
+                tx.tx().as_proof_aggregate().map(|tx| &tx.inner().payload).ok_or_else(|| {
+                    Self::invalid_proof_aggregate(format!(
+                        "transaction at index {tx_index} has proof aggregate type but no payload"
                     ))
                 })?;
             let block_number = self.evm.block().number().saturating_to::<u64>();
             if payload.block_number != block_number {
-                return Err(Self::invalid_claim_aggregate(format!(
+                return Err(Self::invalid_proof_aggregate(format!(
                     "payload block number {} does not match block number {block_number}",
                     payload.block_number
                 )));
             }
-            if payload.claims.is_empty() {
-                return Err(Self::invalid_claim_aggregate(format!(
-                    "claim aggregate tx at index {tx_index} lists no claims"
+            if payload.statements.is_empty() {
+                return Err(Self::invalid_proof_aggregate(format!(
+                    "proof aggregate tx at index {tx_index} lists no statements"
                 )));
             }
-            let verifier = self.ctx.claim_aggregate_verifier.as_ref().ok_or_else(|| {
-                Self::invalid_claim_aggregate("no claim aggregate verifier configured")
+            let verifier = self.ctx.proof_aggregate_verifier.as_ref().ok_or_else(|| {
+                Self::invalid_proof_aggregate("no proof aggregate verifier configured")
             })?;
             verifier
-                .verify(payload.aggregation_vkey_hash, payload.claims_commitment(), &payload.proof)
+                .verify(
+                    payload.aggregation_vkey_hash,
+                    payload.statements_commitment(),
+                    &payload.proof,
+                )
                 .map_err(|reason| {
-                    Self::invalid_claim_aggregate(format!("aggregate proof rejected: {reason}"))
+                    Self::invalid_proof_aggregate(format!("aggregate proof rejected: {reason}"))
                 })?;
 
-            let claim_ids: Vec<B256> = payload.claims.iter().map(|claim| claim.id()).collect();
+            let statement_ids: Vec<B256> =
+                payload.statements.iter().map(|statement| statement.id()).collect();
             let ResultAndState { result, state } = self
                 .evm
                 .transact_system_call(
-                    CLAIM_AGGREGATE_SYSTEM_CALLER,
-                    PROOF_CLAIM_REGISTRY_ADDRESS,
-                    finalize_claims_calldata(payload.aggregation_vkey_hash, &claim_ids),
+                    PROOF_AGGREGATE_SYSTEM_CALLER,
+                    PROOF_REGISTRY_ADDRESS,
+                    verify_statements_calldata(payload.aggregation_vkey_hash, &statement_ids),
                 )
                 .map_err(|err| BlockExecutionError::evm(err, tx.tx().trie_hash()))?;
             let ExecutionResult::Success { reason, logs, output, .. } = result else {
-                return Err(Self::invalid_claim_aggregate(format!(
-                    "registry rejected the claim aggregate at index {tx_index}: {result:?}"
+                return Err(Self::invalid_proof_aggregate(format!(
+                    "registry rejected the proof aggregate at index {tx_index}: {result:?}"
                 )));
             };
-            if !is_finalize_claims_ack(output.data()) {
-                return Err(Self::invalid_claim_aggregate(format!(
-                    "registry did not acknowledge the claim aggregate at index {tx_index}"
+            if !is_verify_statements_ack(output.data()) {
+                return Err(Self::invalid_proof_aggregate(format!(
+                    "registry did not acknowledge the proof aggregate at index {tx_index}"
                 )));
             }
 
-            self.claim_aggregate_seen = true;
+            self.proof_aggregate_seen = true;
             return Ok(OpTxResult {
                 inner: EthTxResult {
                     result: ResultAndState::new(

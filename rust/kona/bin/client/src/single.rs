@@ -125,8 +125,8 @@ where
         alloy_op_evm::block::OpAlloyReceiptBuilder::default(),
         None,
     )
-    .with_claim_aggregate_verifier(Some(alloc::sync::Arc::new(
-        op_sp1_claims::Sp1ClaimAggregateVerifier::new(),
+    .with_proof_aggregate_verifier(Some(alloc::sync::Arc::new(
+        op_sp1_proofs::Sp1ProofAggregateVerifier::new(),
     )));
     let mut driver = Driver::new(cursor, executor, pipeline);
 

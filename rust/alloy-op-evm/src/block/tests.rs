@@ -862,4 +862,4 @@ fn declined_candidate_restores_refund_policy_snapshot() {
 
 mod structural_tests;
 
-mod claim_aggregate_tests;
+mod proof_aggregate_tests;

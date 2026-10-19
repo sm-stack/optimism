@@ -1,13 +1,13 @@
-//! Verification of claim aggregate proofs with the SP1 compressed verifier.
+//! Verification of the proof in a proof aggregate transaction with the SP1 compressed verifier.
 //!
-//! [`Sp1ClaimAggregateVerifier`] is the [`ClaimAggregateVerifier`] the execution client and the
+//! [`Sp1ProofAggregateVerifier`] is the [`ProofAggregateVerifier`] the execution client and the
 //! fault proof program both use: it checks the SP1 compressed (STARK) proof itself, in software.
 //! Inside the fault proof VM this runs the same code as natively, which is what lets a dispute
 //! bisect down to the verifier's instructions.
 
 #![cfg_attr(not(test), warn(unused_crate_dependencies))]
 
-use alloy_op_evm::ClaimAggregateVerifier;
+use alloy_op_evm::ProofAggregateVerifier;
 use alloy_primitives::B256;
 use core::fmt;
 use slop_algebra::{AbstractField, PrimeField32};
@@ -15,7 +15,7 @@ use sp1_primitives::SP1Field;
 use sp1_verifier::{SP1Proof, compressed::SP1CompressedVerifier};
 use std::sync::OnceLock;
 
-/// Converts a verifying key digest in the claim `vkey_hash` encoding, eight big-endian 32-bit
+/// Converts a verifying key digest in the statement `vkey_hash` encoding, eight big-endian 32-bit
 /// words, into the `KoalaBear` digest the SP1 verifier compares against.
 ///
 /// Returns `None` if a word is not a canonical `KoalaBear` element.
@@ -41,26 +41,26 @@ pub fn vkey_hash_from_words(words: [u32; 8]) -> B256 {
     B256::from(out)
 }
 
-/// Verifies claim aggregate proofs as SP1 compressed proofs.
-pub struct Sp1ClaimAggregateVerifier {
+/// Verifies proof aggregate proofs as SP1 compressed proofs.
+pub struct Sp1ProofAggregateVerifier {
     /// Built on first use: constructing it hashes the recursion verifying key tree, a cost the
-    /// fault proof program must not pay for blocks without a claim aggregate.
+    /// fault proof program must not pay for blocks without a proof aggregate.
     verifier: OnceLock<SP1CompressedVerifier>,
 }
 
-impl fmt::Debug for Sp1ClaimAggregateVerifier {
+impl fmt::Debug for Sp1ProofAggregateVerifier {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("Sp1ClaimAggregateVerifier").finish_non_exhaustive()
+        f.debug_struct("Sp1ProofAggregateVerifier").finish_non_exhaustive()
     }
 }
 
-impl Default for Sp1ClaimAggregateVerifier {
+impl Default for Sp1ProofAggregateVerifier {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl Sp1ClaimAggregateVerifier {
+impl Sp1ProofAggregateVerifier {
     /// Creates a verifier. The SP1 verifier itself is built on the first verification; share one
     /// instance so that happens once.
     pub const fn new() -> Self {
@@ -68,7 +68,7 @@ impl Sp1ClaimAggregateVerifier {
     }
 }
 
-impl Sp1ClaimAggregateVerifier {
+impl Sp1ProofAggregateVerifier {
     /// Verifies `proof`, a bincode-encoded `SP1Proof::Compressed`, for the program with verifying
     /// key digest `vkey_hash` and the given committed public values.
     pub fn verify_with_public_values(
@@ -95,14 +95,18 @@ impl Sp1ClaimAggregateVerifier {
     }
 }
 
-impl ClaimAggregateVerifier for Sp1ClaimAggregateVerifier {
+impl ProofAggregateVerifier for Sp1ProofAggregateVerifier {
     fn verify(
         &self,
         aggregation_vkey_hash: B256,
-        claims_commitment: B256,
+        statements_commitment: B256,
         proof: &[u8],
     ) -> Result<(), String> {
-        self.verify_with_public_values(aggregation_vkey_hash, claims_commitment.as_slice(), proof)
+        self.verify_with_public_values(
+            aggregation_vkey_hash,
+            statements_commitment.as_slice(),
+            proof,
+        )
     }
 }
 
@@ -126,19 +130,19 @@ mod tests {
 
     #[test]
     fn rejects_malformed_proof() {
-        let verifier = Sp1ClaimAggregateVerifier::new();
+        let verifier = Sp1ProofAggregateVerifier::new();
         let err = verifier.verify(B256::ZERO, B256::ZERO, &[1, 2, 3]).unwrap_err();
         assert!(err.contains("malformed proof"), "{err}");
     }
 
-    /// Verifies a real SP1 compressed proof. Set `OP_SP1_CLAIMS_FIXTURE_DIR` to a directory with
+    /// Verifies a real SP1 compressed proof. Set `OP_SP1_PROOFS_FIXTURE_DIR` to a directory with
     /// `proof.bin` (bincode `SP1Proof`), `public_values.bin`, and `vkey_hash.bin` (bincode
     /// `[SP1Field; 8]`).
     #[test]
     #[ignore = "needs an SP1 compressed proof fixture"]
     fn verifies_fixture_proof() {
         let dir = std::path::PathBuf::from(
-            std::env::var("OP_SP1_CLAIMS_FIXTURE_DIR").expect("OP_SP1_CLAIMS_FIXTURE_DIR"),
+            std::env::var("OP_SP1_PROOFS_FIXTURE_DIR").expect("OP_SP1_PROOFS_FIXTURE_DIR"),
         );
         let read = |name: &str| std::fs::read(dir.join(name)).unwrap();
         let (vkey, _): ([SP1Field; 8], usize) =
@@ -148,7 +152,7 @@ mod tests {
         let proof = read("proof.bin");
         let public_values = read("public_values.bin");
 
-        let verifier = Sp1ClaimAggregateVerifier::new();
+        let verifier = Sp1ProofAggregateVerifier::new();
         verifier.verify_with_public_values(vkey_hash, &public_values, &proof).unwrap();
 
         let mut tampered = public_values.clone();

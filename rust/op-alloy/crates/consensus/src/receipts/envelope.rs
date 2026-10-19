@@ -54,9 +54,9 @@ pub enum OpReceiptEnvelope<T = Log> {
     /// Receipt envelope with type flag 125, containing a post-execution receipt.
     #[cfg_attr(feature = "serde", serde(rename = "0x7d", alias = "0x7D"))]
     PostExec(ReceiptWithBloom<Receipt<T>>),
-    /// Receipt envelope with type flag 124, containing a claim aggregate receipt.
+    /// Receipt envelope with type flag 124, containing a proof aggregate receipt.
     #[cfg_attr(feature = "serde", serde(rename = "0x7c", alias = "0x7C"))]
-    ClaimAggregate(ReceiptWithBloom<Receipt<T>>),
+    ProofAggregate(ReceiptWithBloom<Receipt<T>>),
     /// Receipt envelope with type flag 126, containing a [deposit] receipt.
     ///
     /// [deposit]: https://specs.optimism.io/protocol/deposits.html
@@ -94,8 +94,8 @@ impl OpReceiptEnvelope<Log> {
             OpTxType::PostExec => {
                 Self::PostExec(ReceiptWithBloom { receipt: inner_receipt, logs_bloom })
             }
-            OpTxType::ClaimAggregate => {
-                Self::ClaimAggregate(ReceiptWithBloom { receipt: inner_receipt, logs_bloom })
+            OpTxType::ProofAggregate => {
+                Self::ProofAggregate(ReceiptWithBloom { receipt: inner_receipt, logs_bloom })
             }
             OpTxType::Deposit => {
                 let inner = OpDepositReceiptWithBloom {
@@ -121,7 +121,7 @@ impl<T> OpReceiptEnvelope<T> {
             Self::Eip1559(_) => OpTxType::Eip1559,
             Self::Eip7702(_) => OpTxType::Eip7702,
             Self::PostExec(_) => OpTxType::PostExec,
-            Self::ClaimAggregate(_) => OpTxType::ClaimAggregate,
+            Self::ProofAggregate(_) => OpTxType::ProofAggregate,
             Self::Deposit(_) => OpTxType::Deposit,
         }
     }
@@ -151,7 +151,7 @@ impl<T> OpReceiptEnvelope<T> {
             Self::Eip1559(r) => OpReceiptEnvelope::Eip1559(r.map_logs(f)),
             Self::Eip7702(r) => OpReceiptEnvelope::Eip7702(r.map_logs(f)),
             Self::PostExec(r) => OpReceiptEnvelope::PostExec(r.map_logs(f)),
-            Self::ClaimAggregate(r) => OpReceiptEnvelope::ClaimAggregate(r.map_logs(f)),
+            Self::ProofAggregate(r) => OpReceiptEnvelope::ProofAggregate(r.map_logs(f)),
             Self::Deposit(r) => OpReceiptEnvelope::Deposit(r.map_receipt(|r| r.map_logs(f))),
         }
     }
@@ -174,7 +174,7 @@ impl<T> OpReceiptEnvelope<T> {
             Self::Eip1559(t) |
             Self::Eip7702(t) |
             Self::PostExec(t) |
-            Self::ClaimAggregate(t) => &t.logs_bloom,
+            Self::ProofAggregate(t) => &t.logs_bloom,
             Self::Deposit(t) => &t.logs_bloom,
         }
     }
@@ -213,7 +213,7 @@ impl<T> OpReceiptEnvelope<T> {
             Self::Eip1559(t) |
             Self::Eip7702(t) |
             Self::PostExec(t) |
-            Self::ClaimAggregate(t) => t.receipt,
+            Self::ProofAggregate(t) => t.receipt,
             Self::Deposit(t) => t.receipt.into_inner(),
         }
     }
@@ -227,7 +227,7 @@ impl<T> OpReceiptEnvelope<T> {
             Self::Eip1559(t) |
             Self::Eip7702(t) |
             Self::PostExec(t) |
-            Self::ClaimAggregate(t) => Some(&t.receipt),
+            Self::ProofAggregate(t) => Some(&t.receipt),
             Self::Deposit(t) => Some(&t.receipt.inner),
         }
     }
@@ -242,7 +242,7 @@ impl OpReceiptEnvelope {
             Self::Eip1559(t) |
             Self::Eip7702(t) |
             Self::PostExec(t) |
-            Self::ClaimAggregate(t) => t.length(),
+            Self::ProofAggregate(t) => t.length(),
             Self::Deposit(t) => t.length(),
         }
     }
@@ -320,7 +320,7 @@ impl Typed2718 for OpReceiptEnvelope {
             Self::Eip1559(_) => OpTxType::Eip1559,
             Self::Eip7702(_) => OpTxType::Eip7702,
             Self::PostExec(_) => OpTxType::PostExec,
-            Self::ClaimAggregate(_) => OpTxType::ClaimAggregate,
+            Self::ProofAggregate(_) => OpTxType::ProofAggregate,
             Self::Deposit(_) => OpTxType::Deposit,
         };
         ty as u8
@@ -350,7 +350,7 @@ impl Encodable2718 for OpReceiptEnvelope {
             Self::Eip1559(t) |
             Self::Eip7702(t) |
             Self::PostExec(t) |
-            Self::ClaimAggregate(t) => t.encode(out),
+            Self::ProofAggregate(t) => t.encode(out),
         }
     }
 }
@@ -366,7 +366,7 @@ impl Decodable2718 for OpReceiptEnvelope {
             OpTxType::Eip7702 => Ok(Self::Eip7702(Decodable::decode(buf)?)),
             OpTxType::Eip2930 => Ok(Self::Eip2930(Decodable::decode(buf)?)),
             OpTxType::PostExec => Ok(Self::PostExec(Decodable::decode(buf)?)),
-            OpTxType::ClaimAggregate => Ok(Self::ClaimAggregate(Decodable::decode(buf)?)),
+            OpTxType::ProofAggregate => Ok(Self::ProofAggregate(Decodable::decode(buf)?)),
             OpTxType::Deposit => Ok(Self::Deposit(Decodable::decode(buf)?)),
         }
     }
@@ -403,7 +403,7 @@ where
             2 => Ok(Self::Eip1559(ReceiptWithBloom::arbitrary(u)?)),
             3 => Ok(Self::Eip7702(ReceiptWithBloom::arbitrary(u)?)),
             4 => Ok(Self::PostExec(ReceiptWithBloom::arbitrary(u)?)),
-            5 => Ok(Self::ClaimAggregate(ReceiptWithBloom::arbitrary(u)?)),
+            5 => Ok(Self::ProofAggregate(ReceiptWithBloom::arbitrary(u)?)),
             _ => Ok(Self::Deposit(OpDepositReceiptWithBloom::arbitrary(u)?)),
         }
     }

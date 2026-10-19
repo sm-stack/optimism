@@ -9,8 +9,8 @@ use alloy_primitives::{Address, Signature, TxKind, U256};
 use alloy_primitives::{Bytes, ChainId};
 use alloy_rpc_types_eth::{AccessList, TransactionInput, TransactionRequest};
 use op_alloy_consensus::{
-    CLAIM_AGGREGATE_TX_TYPE_ID, OpTxEnvelope, OpTypedTransaction, POST_EXEC_TX_TYPE_ID,
-    TxClaimAggregate, TxDeposit, TxPostExec,
+    OpTxEnvelope, OpTypedTransaction, POST_EXEC_TX_TYPE_ID, PROOF_AGGREGATE_TX_TYPE_ID, TxDeposit,
+    TxPostExec, TxProofAggregate,
 };
 use serde::{Deserialize, Serialize};
 
@@ -175,11 +175,11 @@ impl From<TxPostExec> for OpTransactionRequest {
     }
 }
 
-impl From<TxClaimAggregate> for OpTransactionRequest {
-    fn from(tx: TxClaimAggregate) -> Self {
+impl From<TxProofAggregate> for OpTransactionRequest {
+    fn from(tx: TxProofAggregate) -> Self {
         Self(TransactionRequest {
             from: Some(tx.signer_address()),
-            transaction_type: Some(CLAIM_AGGREGATE_TX_TYPE_ID),
+            transaction_type: Some(PROOF_AGGREGATE_TX_TYPE_ID),
             gas: Some(0),
             nonce: Some(0),
             value: Some(U256::ZERO),
@@ -215,7 +215,7 @@ impl From<OpTypedTransaction> for OpTransactionRequest {
             OpTypedTransaction::Eip7702(tx) => Self(tx.into()),
             OpTypedTransaction::Deposit(tx) => tx.into(),
             OpTypedTransaction::PostExec(tx) => tx.into(),
-            OpTypedTransaction::ClaimAggregate(tx) => tx.into(),
+            OpTypedTransaction::ProofAggregate(tx) => tx.into(),
         }
     }
 }
@@ -228,7 +228,7 @@ impl From<OpTxEnvelope> for OpTransactionRequest {
             OpTxEnvelope::Eip7702(tx) => tx.into(),
             OpTxEnvelope::Deposit(tx) => tx.into(),
             OpTxEnvelope::PostExec(tx) => tx.into_inner().into(),
-            OpTxEnvelope::ClaimAggregate(tx) => tx.into_inner().into(),
+            OpTxEnvelope::ProofAggregate(tx) => tx.into_inner().into(),
             _ => Default::default(),
         }
     }

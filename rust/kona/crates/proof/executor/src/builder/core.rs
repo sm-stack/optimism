@@ -13,7 +13,7 @@ use alloy_evm::{
     block::{BlockExecutionResult, BlockExecutor, BlockExecutorFactory},
 };
 use alloy_op_evm::{
-    OpBlockExecutionCtx, OpBlockExecutorFactory, PostExecMode, SharedClaimAggregateVerifier,
+    OpBlockExecutionCtx, OpBlockExecutorFactory, PostExecMode, SharedProofAggregateVerifier,
     block::{OpTxEnv, receipt_builder::OpReceiptBuilder},
 };
 use alloy_op_hardforks::OpHardforks;
@@ -104,8 +104,8 @@ where
     /// understand OP-specific transaction types, system calls, and state
     /// management required for proper L2 block execution.
     pub(crate) factory: OpBlockExecutorFactory<R, RollupConfig, Evm>,
-    /// Verifier for claim aggregate transactions. `None` rejects any block that carries one.
-    pub(crate) claim_aggregate_verifier: Option<SharedClaimAggregateVerifier>,
+    /// Verifier for proof aggregate transactions. `None` rejects any block that carries one.
+    pub(crate) proof_aggregate_verifier: Option<SharedProofAggregateVerifier>,
     /// Test-only override for SDM activation while the fork is not yet scheduled.
     #[cfg(any(test, feature = "test-utils"))]
     pub(crate) sdm_active_override: Option<bool>,
@@ -168,19 +168,19 @@ where
             config,
             trie_db,
             factory,
-            claim_aggregate_verifier: None,
+            proof_aggregate_verifier: None,
             #[cfg(any(test, feature = "test-utils"))]
             sdm_active_override: None,
         }
     }
 
-    /// Sets the verifier used for claim aggregate transactions.
+    /// Sets the verifier used for proof aggregate transactions.
     #[must_use]
-    pub fn with_claim_aggregate_verifier(
+    pub fn with_proof_aggregate_verifier(
         mut self,
-        verifier: Option<SharedClaimAggregateVerifier>,
+        verifier: Option<SharedProofAggregateVerifier>,
     ) -> Self {
-        self.claim_aggregate_verifier = verifier;
+        self.proof_aggregate_verifier = verifier;
         self
     }
 
@@ -333,7 +333,7 @@ where
             // This field is unused for individual block building jobs.
             extra_data: Default::default(),
             post_exec_mode,
-            claim_aggregate_verifier: self.claim_aggregate_verifier.clone(),
+            proof_aggregate_verifier: self.proof_aggregate_verifier.clone(),
         };
         let executor = self.factory.create_executor(evm, ctx);
 

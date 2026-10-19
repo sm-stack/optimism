@@ -2,7 +2,7 @@
 
 mod wrapper;
 pub use wrapper::{
-    SpanBatchClaimAggregateTransactionData, SpanBatchPostExecTransactionData,
+    SpanBatchPostExecTransactionData, SpanBatchProofAggregateTransactionData,
     SpanBatchTransactionData,
 };
 

@@ -1,6 +1,6 @@
 [package]
-name = "op-sp1-claims"
-description = "SP1 claim aggregate proof verification for OP Stack execution"
+name = "op-sp1-proofs"
+description = "SP1 proof aggregate proof verification for OP Stack execution"
 version = "0.1.0"
 edition.workspace = true
 authors.workspace = true

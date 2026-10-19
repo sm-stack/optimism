@@ -44,8 +44,8 @@ pub enum BatchDropReason {
     Eip7702PreIsthmus,
     /// `PostExec` transaction included before Lagoon activation.
     PostExecPreLagoon,
-    /// Claim aggregate transaction included before proof claims activation.
-    ClaimAggregateInactive,
+    /// Proof aggregate transaction included before proof aggregation activation.
+    ProofAggregateInactive,
     /// Non-empty batch in Jovian or Interop transition block.
     NonEmptyTransitionBlock,
 
@@ -98,8 +98,8 @@ impl core::fmt::Display for BatchDropReason {
             Self::DepositTransaction => write!(f, "batch contains deposit transaction"),
             Self::Eip7702PreIsthmus => write!(f, "EIP-7702 transaction before Isthmus activation"),
             Self::PostExecPreLagoon => write!(f, "PostExec transaction before Lagoon activation"),
-            Self::ClaimAggregateInactive => {
-                write!(f, "claim aggregate transaction before proof claims activation")
+            Self::ProofAggregateInactive => {
+                write!(f, "proof aggregate transaction before proof aggregation activation")
             }
             Self::NonEmptyTransitionBlock => write!(f, "non-empty batch in transition block"),
             Self::SpanBatchPreDelta => write!(f, "span batch received before Delta hard fork"),

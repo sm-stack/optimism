@@ -7222,7 +7222,7 @@ dependencies = [
  "op-alloy-consensus",
  "op-alloy-rpc-types-engine",
  "op-revm",
- "op-sp1-claims",
+ "op-sp1-proofs",
  "revm",
  "serde",
  "serde_json",
@@ -9964,7 +9964,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "op-sp1-claims"
+name = "op-sp1-proofs"
 version = "0.1.0"
 dependencies = [
  "alloy-op-evm",
@@ -14010,7 +14010,7 @@ dependencies = [
  "op-alloy-network",
  "op-alloy-rpc-types-engine",
  "op-revm",
- "op-sp1-claims",
+ "op-sp1-proofs",
  "reth-chain-state",
  "reth-chainspec",
  "reth-consensus",

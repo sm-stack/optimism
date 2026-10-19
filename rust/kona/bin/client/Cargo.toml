@@ -41,7 +41,7 @@ op-alloy-rpc-types-engine = { workspace = true, features = ["serde"] }
 revm.workspace = true
 op-revm.workspace = true
 alloy-op-evm.workspace = true
-op-sp1-claims.workspace = true
+op-sp1-proofs.workspace = true
 alloy-evm = { workspace = true }
 
 # General

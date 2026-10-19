@@ -336,9 +336,9 @@ library Config {
         return vm.envOr("DEV_FEATURE__ZK_DISPUTE_GAME", false);
     }
 
-    /// @notice Returns true if the development feature PROOF_CLAIMS is enabled.
-    function devFeatureProofClaims() internal view returns (bool) {
-        return vm.envOr("DEV_FEATURE__PROOF_CLAIMS", false);
+    /// @notice Returns true if the development feature PROOF_AGGREGATION is enabled.
+    function devFeatureProofAggregation() internal view returns (bool) {
+        return vm.envOr("DEV_FEATURE__PROOF_AGGREGATION", false);
     }
 
     /// @notice Returns true if the development feature super root games migration is enabled.
