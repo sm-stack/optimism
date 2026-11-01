@@ -171,12 +171,9 @@ func checkSingularBatch(cfg *rollup.Config, log log.Logger, l1Blocks []eth.L1Blo
 		}
 	}
 
-	isIsthmus := cfg.IsIsthmus(batch.Timestamp)
-	isSDM := cfg.IsSDM(batch.Timestamp)
-
 	// We can do this check earlier, but it's a more intensive one, so we do this last.
 	for i, txBytes := range batch.Transactions {
-		if validity := checkSequencerTxData(log, i, txBytes, isIsthmus, isSDM); validity != BatchAccept {
+		if validity := checkSequencerTxData(log, cfg, batch.Timestamp, i, txBytes); validity != BatchAccept {
 			return validity
 		}
 	}
@@ -184,7 +181,9 @@ func checkSingularBatch(cfg *rollup.Config, log log.Logger, l1Blocks []eth.L1Blo
 	return BatchAccept
 }
 
-func checkSequencerTxData(log log.Logger, txIndex int, txBytes []byte, isIsthmus, isSDM bool) BatchValidity {
+// checkSequencerTxData checks one sequencer transaction of the block at timestamp against the
+// transaction types active then.
+func checkSequencerTxData(log log.Logger, cfg *rollup.Config, timestamp uint64, txIndex int, txBytes []byte) BatchValidity {
 	if len(txBytes) == 0 {
 		log.Warn("transaction data must not be empty, but found empty tx", "tx_index", txIndex)
 		return BatchDrop
@@ -194,13 +193,18 @@ func checkSequencerTxData(log log.Logger, txIndex int, txBytes []byte, isIsthmus
 		log.Warn("sequencers may not embed any deposits into batch data, but found tx that has one", "tx_index", txIndex)
 		return BatchDrop
 	case types.SetCodeTxType:
-		if !isIsthmus {
+		if !cfg.IsIsthmus(timestamp) {
 			log.Warn("sequencers may not embed any SetCode transactions before Isthmus", "tx_index", txIndex)
 			return BatchDrop
 		}
 	case optypes.PostExecTxType:
-		if !isSDM {
+		if !cfg.IsSDM(timestamp) {
 			log.Warn("sequencers may not embed any PostExec transactions before SDM", "tx_index", txIndex)
+			return BatchDrop
+		}
+	case optypes.AaTxType:
+		if !cfg.IsAaTx(timestamp) {
+			log.Warn("sequencers may not embed any EIP-8430 transactions before Lagoon", "tx_index", txIndex)
 			return BatchDrop
 		}
 	}
@@ -409,10 +413,8 @@ func checkSpanBatch(ctx context.Context, cfg *rollup.Config, log log.Logger, l1B
 			}
 		}
 
-		isIsthmus := cfg.IsIsthmus(blockTimestamp)
-		isSDM := cfg.IsSDM(blockTimestamp)
 		for i, txBytes := range batch.GetBlockTransactions(i) {
-			if validity := checkSequencerTxData(log, i, txBytes, isIsthmus, isSDM); validity != BatchAccept {
+			if validity := checkSequencerTxData(log, cfg, blockTimestamp, i, txBytes); validity != BatchAccept {
 				return validity
 			}
 		}

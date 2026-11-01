@@ -27,6 +27,7 @@ import (
 	"github.com/ethereum-optimism/optimism/op-node/rollup"
 	"github.com/ethereum-optimism/optimism/op-node/rollup/async"
 	"github.com/ethereum-optimism/optimism/op-node/rollup/conductor"
+	"github.com/ethereum-optimism/optimism/op-node/rollup/derive"
 	"github.com/ethereum-optimism/optimism/op-node/rollup/driver"
 	"github.com/ethereum-optimism/optimism/op-node/rollup/sequencing"
 	"github.com/ethereum-optimism/optimism/op-node/rollup/sync"
@@ -561,6 +562,13 @@ func initL2(ctx context.Context, cfg *config.Config, node *OpNode) (*sources.Eng
 		return nil, nil, nil, fmt.Errorf("failed to get altDA config: %w", err)
 	}
 	altDA := altda.NewAltDA(node.log, cfg.AltDA, rpCfg, node.metrics.AltDAMetrics)
+
+	// Load the class before opening anything that would need closing on failure.
+	verifyAggregates, err := derive.LeanVmTreeVerifier()
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("failed to load the leanVM tree class: %w", err)
+	}
+
 	var safeDB closableSafeDB
 	if cfg.SafeDBPath != "" {
 		node.log.Info("Safe head database enabled", "path", cfg.SafeDBPath)
@@ -582,7 +590,7 @@ func initL2(ctx context.Context, cfg *config.Config, node *OpNode) (*sources.Eng
 	}
 
 	l2Driver := driver.NewDriver(node.eventSys, node.eventDrain, &cfg.Driver, &cfg.Rollup, cfg.L1ChainConfig, cfg.DependencySet, l2Source, node.l1Source, upstreamFollowSource,
-		node.beacon, node, node.log, node.metrics, cfg.ConfigPersistence, safeDB, &cfg.Sync, sequencerConductor, altDA, node.superAuthority)
+		node.beacon, node, node.log, node.metrics, cfg.ConfigPersistence, safeDB, &cfg.Sync, sequencerConductor, altDA, node.superAuthority, verifyAggregates)
 
 	return l2Source, l2Driver, safeDB, nil
 }

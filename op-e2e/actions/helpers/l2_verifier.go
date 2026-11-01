@@ -136,7 +136,9 @@ func NewL2Verifier(t Testing, log log.Logger, l1 derive.L1Fetcher,
 	sys.Register("attributes-handler", attrHandler, opts)
 	ec.SetAttributesResetter(attrHandler)
 
-	pipeline := derive.NewDerivationPipeline(log, cfg, depSet, l1, blobsSrc, altDASrc, eng, metrics, l1ChainConfig)
+	verifyAggregates, err := derive.LeanVmTreeVerifier()
+	require.NoError(t, err)
+	pipeline := derive.NewDerivationPipeline(log, cfg, depSet, l1, blobsSrc, altDASrc, eng, metrics, l1ChainConfig, verifyAggregates)
 	pipelineDeriver := derive.NewPipelineDeriver(ctx, pipeline)
 	sys.Register("pipeline", pipelineDeriver, opts)
 	ec.SetPipelineResetter(pipelineDeriver)

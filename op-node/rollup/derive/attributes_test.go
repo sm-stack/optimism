@@ -408,7 +408,7 @@ func TestPreparePayloadAttributes(t *testing.T) {
 		}
 
 		t.Run("WithSingleChainDepSet", func(t *testing.T) {
-			// Single-chain superchains execute the bundle upgrades but skip the
+			// Single-chain superchains execute the bundle upgrades and the Keystore deployments but skip the
 			// Interop-specific setFeature and ETHLiquidity funding wrappers.
 			depSet, err := depset.NewStaticConfigDependencySet(map[eth.ChainID]*depset.StaticConfigDependency{
 				eth.ChainIDFromUInt64(42): {},
@@ -417,6 +417,9 @@ func TestPreparePayloadAttributes(t *testing.T) {
 			attrs := prepareActivationAttributes(t, depSet)
 			bundleTxs, _, err := UpgradeTransactions(forks.Lagoon)
 			require.NoError(t, err)
+			keystoreTxs, err := keystoreDeposits()
+			require.NoError(t, err)
+			bundleTxs = append(bundleTxs, keystoreTxs...)
 
 			require.Len(t, attrs.Transactions, len(bundleTxs)+1) // +1 for L1Info tx
 			for i, tx := range bundleTxs {
@@ -426,7 +429,7 @@ func TestPreparePayloadAttributes(t *testing.T) {
 
 		t.Run("WithMultiChainDepSet", func(t *testing.T) {
 			// Multi-chain superchains run the full Interop activation:
-			// setFeature wrapper + JSON NUT bundle + ETHLiquidity funding wrapper.
+			// setFeature wrapper + JSON NUT bundle + Keystore deployments + ETHLiquidity funding wrapper.
 			depSet, err := depset.NewStaticConfigDependencySet(map[eth.ChainID]*depset.StaticConfigDependency{
 				eth.ChainIDFromUInt64(42): {},
 				eth.ChainIDFromUInt64(44): {},
@@ -438,6 +441,9 @@ func TestPreparePayloadAttributes(t *testing.T) {
 			require.NoError(t, err)
 			bundleTxs, _, err := UpgradeTransactions(forks.Lagoon)
 			require.NoError(t, err)
+			keystoreTxs, err := keystoreDeposits()
+			require.NoError(t, err)
+			bundleTxs = append(bundleTxs, keystoreTxs...)
 			fundingTx, err := interopETHLiquidityFundingDeposit().MarshalBinary()
 			require.NoError(t, err)
 

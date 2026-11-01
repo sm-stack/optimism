@@ -276,8 +276,9 @@ func (btx *spanBatchTxs) recoverV(chainID *big.Int) error {
 		case types.AccessListTxType, types.DynamicFeeTxType, types.SetCodeTxType:
 			// For non-legacy tx types, v is just the y-parity bit (0 or 1).
 			v = big.NewInt(int64(bit))
-		case optypes.PostExecTxType:
-			// PostExec txs are synthetic, unsigned, and chain-agnostic.
+		case optypes.PostExecTxType, optypes.AaTxType:
+			// PostExec txs are synthetic, unsigned, and chain-agnostic; EIP-8430 txs carry their
+			// signatures in their payload.
 			v = big.NewInt(0)
 		default:
 			return fmt.Errorf("invalid tx type: %d", txType)
@@ -427,10 +428,9 @@ func newSpanBatchTxs(txs [][]byte, chainID *big.Int) (*spanBatchTxs, error) {
 func (sbtx *spanBatchTxs) AddTxs(txs [][]byte, chainID *big.Int) error {
 	offset := sbtx.totalBlockTxCount
 	for idx, rawTx := range txs {
-		if len(rawTx) > 0 && rawTx[0] == optypes.PostExecTxType {
-			if err := sbtx.addPostExecTx(rawTx, idx+int(offset)); err != nil {
-				return err
-			}
+		if added, err := sbtx.addSyntheticRawTx(rawTx, idx+int(offset)); err != nil {
+			return err
+		} else if added {
 			continue
 		}
 		tx := &types.Transaction{}
@@ -499,28 +499,37 @@ func (sbtx *spanBatchTxs) AddTxs(txs [][]byte, chainID *big.Int) error {
 //
 // A violation invalidates the whole span batch: these slots are positional across the
 // span, so it cannot be attributed to the one block whose transaction carries it.
+//
+// The same rule applies to EIP-8430 (0x79) transactions for the same reason: their nonce, gas
+// limit, sender and signatures all live in their payload.
 func (btx *spanBatchTxs) checkPostExecSlots() error {
 	for idx, txType := range btx.txTypes {
-		if txType != optypes.PostExecTxType {
+		var name string
+		switch txType {
+		case optypes.PostExecTxType:
+			name = "post-exec"
+		case optypes.AaTxType:
+			name = "EIP-8430"
+		default:
 			continue
 		}
 		if idx >= len(btx.txSigs) || idx >= len(btx.txNonces) || idx >= len(btx.txGases) {
-			return fmt.Errorf("post-exec tx at index %d: span batch slot arrays are short", idx)
+			return fmt.Errorf("%s tx at index %d: span batch slot arrays are short", name, idx)
 		}
 		if btx.zeroToBits.Bit(idx) != 1 {
-			return fmt.Errorf("post-exec tx at index %d must set the zero-to bit", idx)
+			return fmt.Errorf("%s tx at index %d must set the zero-to bit", name, idx)
 		}
 		if btx.yParityBits.Bit(idx) != 0 {
-			return fmt.Errorf("post-exec tx at index %d must have a zero y parity bit", idx)
+			return fmt.Errorf("%s tx at index %d must have a zero y parity bit", name, idx)
 		}
 		if !btx.txSigs[idx].r.IsZero() || !btx.txSigs[idx].s.IsZero() {
-			return fmt.Errorf("post-exec tx at index %d must have a zero signature", idx)
+			return fmt.Errorf("%s tx at index %d must have a zero signature", name, idx)
 		}
 		if btx.txNonces[idx] != 0 {
-			return fmt.Errorf("post-exec tx at index %d must have a zero nonce", idx)
+			return fmt.Errorf("%s tx at index %d must have a zero nonce", name, idx)
 		}
 		if btx.txGases[idx] != 0 {
-			return fmt.Errorf("post-exec tx at index %d must have a zero gas limit", idx)
+			return fmt.Errorf("%s tx at index %d must have a zero gas limit", name, idx)
 		}
 	}
 	return nil
@@ -537,7 +546,39 @@ func (sbtx *spanBatchTxs) addPostExecTx(rawTx []byte, idx int) error {
 	if err != nil {
 		return fmt.Errorf("failed to decode post-exec tx: %w", err)
 	}
-	stx := &spanBatchTx{inner: &spanBatchPostExecTxData{Data: postExecTx.Data}}
+	return sbtx.addSyntheticTx(&spanBatchPostExecTxData{Data: postExecTx.Data}, idx)
+}
+
+// addSyntheticRawTx adds rawTx if it is an OP Stack transaction go-ethereum does not know (post-exec
+// or frame), reporting whether it was one. Those classes are not decoded through go-ethereum.
+func (sbtx *spanBatchTxs) addSyntheticRawTx(rawTx []byte, idx int) (bool, error) {
+	if len(rawTx) == 0 {
+		return false, nil
+	}
+	switch rawTx[0] {
+	case optypes.PostExecTxType:
+		return true, sbtx.addPostExecTx(rawTx, idx)
+	case optypes.AaTxType:
+		return true, sbtx.addAaTx(rawTx, idx)
+	default:
+		return false, nil
+	}
+}
+
+// addAaTx appends the span batch fields of an EIP-8430 (0x79) transaction: its payload verbatim,
+// with zero slots. The payload is decoded only as a sanity check on the batcher side; the
+// execution client applies the full validity rules.
+func (sbtx *spanBatchTxs) addAaTx(rawTx []byte, idx int) error {
+	if _, err := optypes.UnmarshalAaTx(rawTx); err != nil {
+		return fmt.Errorf("failed to decode EIP-8430 tx: %w", err)
+	}
+	return sbtx.addSyntheticTx(&spanBatchAaTxData{Data: common.CopyBytes(rawTx[1:])}, idx)
+}
+
+// addSyntheticTx appends an unsigned synthetic transaction at position idx of the span: every
+// transposed envelope field is zero and only the opaque payload is stored.
+func (sbtx *spanBatchTxs) addSyntheticTx(inner spanBatchTxData, idx int) error {
+	stx := &spanBatchTx{inner: inner}
 	txData, err := stx.MarshalBinary()
 	if err != nil {
 		return err
@@ -549,6 +590,6 @@ func (sbtx *spanBatchTxs) addPostExecTx(rawTx []byte, idx int) error {
 	sbtx.txNonces = append(sbtx.txNonces, 0)
 	sbtx.txGases = append(sbtx.txGases, 0)
 	sbtx.txDatas = append(sbtx.txDatas, txData)
-	sbtx.txTypes = append(sbtx.txTypes, optypes.PostExecTxType)
+	sbtx.txTypes = append(sbtx.txTypes, int(inner.txType()))
 	return nil
 }

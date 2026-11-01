@@ -148,6 +148,14 @@ func ProcessFrames(cfg Config, rollupCfg *rollup.Config, id derive.ChannelID, fr
 						}
 						// spanBatch will be nil when errored
 						batches = append(batches, spanBatch)
+					case derive.ProofAggregateBatchType:
+						proofAggregateBatch, err := derive.GetProofAggregateBatch(batchData)
+						if err != nil {
+							invalidBatches = true
+							fmt.Printf("Error converting proofAggregateBatch from batchData for channel %v. Err: %v\n", id.String(), err)
+						}
+						// proofAggregateBatch will be nil when errored
+						batches = append(batches, proofAggregateBatch)
 					default:
 						fmt.Printf("unrecognized batch type: %d for channel %v.\n", batchData.GetBatchType(), id.String())
 					}

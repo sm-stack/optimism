@@ -23,6 +23,9 @@ type ChannelInReader struct {
 	nextBatchFn func() (*BatchData, error)
 	prev        RawChannelProvider
 	metrics     Metrics
+	// proofAggregates makes the reader return proof aggregate batches, for the dependency scanner.
+	// The pipeline's own reader skips them.
+	proofAggregates bool
 }
 
 var (
@@ -123,6 +126,19 @@ func (cr *ChannelInReader) NextBatch(ctx context.Context) (Batch, error) {
 		}
 		batch.LogContext(cr.log).Info("decoded span batch from channel", "stage_origin", cr.Origin())
 		cr.metrics.RecordDerivedBatches("span")
+		return batch, nil
+	case ProofAggregateBatchType:
+		if origin := cr.Origin(); !cr.cfg.IsProofAggregation(origin.Time) {
+			// Before proof aggregation the type is unknown, and an unknown type ends the channel.
+			cr.log.Warn("dropping channel with a proof aggregate batch before proof aggregation", "origin", origin)
+			cr.NextChannel()
+			return nil, NotEnoughData
+		}
+		if !cr.proofAggregates {
+			return nil, NotEnoughData
+		}
+		batch.Batch = batchData.inner.(*ProofAggregateBatch)
+		batch.LogContext(cr.log).Debug("decoded proof aggregate batch from channel", "stage_origin", cr.Origin())
 		return batch, nil
 	default:
 		// error is bubbled up to user, but pipeline can skip the batch and continue after.

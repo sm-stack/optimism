@@ -584,6 +584,20 @@ func TestSpanBatchTxsRecoverVInvalidTxType(t *testing.T) {
 	require.ErrorContains(t, err, "invalid tx type")
 }
 
+// A type byte that maps to no transaction type (0x03, 0x7F, or 0x06, the removed frame transaction)
+// invalidates the span batch, as kona's reader does (`test_read_tx_data_rejects_unknown_type_byte`).
+func TestSpanBatchTxsRecoverVRejectsUnknownTypes(t *testing.T) {
+	for _, txType := range []int{0x03, 0x06, 0x7F} {
+		sbt := spanBatchTxs{
+			txTypes:       []int{txType},
+			txSigs:        []spanBatchSignature{{v: big.NewInt(0)}},
+			yParityBits:   new(big.Int),
+			protectedBits: new(big.Int),
+		}
+		require.ErrorContains(t, sbt.recoverV(big.NewInt(901)), "invalid tx type", "type %#x", txType)
+	}
+}
+
 func TestSpanBatchTxsFullTxNotEnoughTxTos(t *testing.T) {
 	rng := rand.New(rand.NewSource(0x13572468))
 	chainID := big.NewInt(rng.Int63n(1000))

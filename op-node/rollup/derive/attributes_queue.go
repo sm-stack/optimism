@@ -93,12 +93,20 @@ func (aq *AttributesQueue) NextAttributes(ctx context.Context, parent eth.L2Bloc
 	if attrs, err := aq.createNextAttributes(ctx, aq.batch, parent); err != nil {
 		return nil, err
 	} else {
+		// A block decided by a dependency scan is derived from the L1 data the scan read, not just
+		// up to where its batch was read.
+		derivedFrom := aq.Origin()
+		if decider, ok := aq.prev.(DependencyDecider); ok {
+			if decidedAt, ok := decider.DecidedAt(); ok && decidedAt.Number > derivedFrom.Number {
+				derivedFrom = decidedAt
+			}
+		}
 		// Clear out the local state once we will succeed
 		attr := AttributesWithParent{
 			Attributes:  attrs,
 			Parent:      parent,
 			Concluding:  aq.concluding,
-			DerivedFrom: aq.Origin(),
+			DerivedFrom: derivedFrom,
 		}
 		aq.lastAttribs = &attr
 		aq.batch = nil

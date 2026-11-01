@@ -95,6 +95,7 @@ It does not vendor them. `op-alloy-consensus` holds the wire format and the sour
 | L1 attributes deposit and calldata | [L1 attributes deposited transaction](https://specs.optimism.io/protocol/deposits.html#l1-attributes-deposited-transaction), [Ecotone L1 attributes](https://specs.optimism.io/protocol/ecotone/l1-attributes.html) | `op-node/rollup/derive`: `L1InfoDeposit`, `L1InfoDepositBytes`, `L1InfoDepositerAddress`, the per-fork marshal functions | `kona-protocol`: `L1BlockInfoTx`, `try_new_with_deposit_tx`, `encode_calldata`, `decode_calldata`, `L1_INFO_DEPOSITOR_ADDRESS` | `L1Block`: the `setL1BlockValues` functions, `DEPOSITOR_ACCOUNT` |
 | Network upgrade deposits | The upgrade-transaction section of each fork specification, [L2 upgrades](https://specs.optimism.io/protocol/l2-upgrades-1-execution.html) | `op-node/rollup/derive`: `UpgradeTransactions`, `UpgradeGas`, `nutBundleForFork`, the Lagoon activation transactions | `kona-hardforks`: the per-fork upgrade types; `op-alloy-consensus`: the NUT bundle conversion | `NetworkUpgradeTxns` |
 | Upgrade bundle data | [L2 upgrades](https://specs.optimism.io/protocol/l2-upgrades-1-execution.html) | `op-core/nuts/bundles`: the per-fork NUT bundle JSON, shared by both clients | the same JSON files | n/a |
+| Lagoon Keystore deployments | not yet specified | `op-core/eip8130`: the Keystore and STATEMENT authenticator bytecode, built by `packages/eip8130/build.sh`; `op-deployer/pkg/deployer/pipeline/l2genesis.go` and `op-chain-ops/interopgen`: the same accounts at genesis | `op-alloy-consensus`: `keystore`, the same hex files | n/a |
 | Validation and authorization | [Validation and authorization](https://specs.optimism.io/protocol/deposits.html#validation-and-authorization-of-deposited-transactions) | n/a | `op-revm`: `validate_env`, `validate_initial_tx_gas` | `OptimismPortal2`: `depositTransaction` |
 | Mint, caller deduction, nonce | [Execution](https://specs.optimism.io/protocol/deposits.html#execution), [Nonce handling](https://specs.optimism.io/protocol/deposits.html#nonce-handling) | n/a | `op-revm`: `validate_against_state_and_deduct_caller` | `OptimismPortal2`, `ETHLockbox` |
 | Gas result, refunds, system transactions | [Execution](https://specs.optimism.io/protocol/deposits.html#execution), [Regolith](https://specs.optimism.io/protocol/regolith/overview.html) | n/a | `op-revm`: `last_frame_result`, `refund`, `tx_gas`; `alloy-op-evm`: `validate_block_gas` | `ResourceMetering`: `metered`, `useGas` |
@@ -105,6 +106,8 @@ It does not vendor them. `op-alloy-consensus` holds the wire format and the sour
 | Receipts-root encoding | [Deposit receipt](https://specs.optimism.io/protocol/deposits.html#deposit-receipt), [Canyon](https://specs.optimism.io/protocol/canyon/overview.html) | `op-core/types`: `Receipts.EncodeIndex` | `reth-optimism-consensus`: `calculate_receipt_root_optimism`; `kona-executor`: `compute_receipts_root` | n/a |
 | Address aliasing | [Address aliasing](https://specs.optimism.io/protocol/deposits.html#address-aliasing) | n/a | n/a | `AddressAliasHelper`: `applyL1ToL2Alias`, `undoL1ToL2Alias` |
 | Guaranteed gas | [Guaranteed gas market](https://specs.optimism.io/protocol/guaranteed-gas-market.html) | n/a | n/a | `ResourceMetering` |
+| Deposit-only blocks | [Holocene engine queue](https://specs.optimism.io/protocol/holocene/derivation.html#engine-queue), [Replacing invalid blocks](https://specs.optimism.io/interop/derivation.html#replacing-invalid-blocks) | `op-service/eth`: `WithDepositsOnly`; `op-node/rollup/derive`: `DependencyGate` | `kona-protocol`: `as_deposits_only`; `kona-driver`: the deposit-only retry; `kona-derive`: `DependencyGate` | n/a |
+| Transaction Context precompile reached by a deposit | not yet specified | n/a | `op-revm`: `aa::context`, and the four precompile providers that serve its address | n/a |
 | Fault-proof execution environment | [Deposits](https://specs.optimism.io/protocol/deposits.html) | n/a | `kona-client`: the FPVM transaction environment; `kona-executor`: the block builder | n/a |
 
 The fault-proof executor holds no separate deposit execution rules.
@@ -130,6 +133,8 @@ Check whether a change needs a new case in one of these:
 | --- | --- |
 | Go and Rust upgrade-deposit bytes | `ops/scripts`: the interop deposits diff script and its two dump commands |
 | Deposit gas parity against the proof | `rust/kona/tests/proofs`: `TestDepositGasParity` |
+| Activation-block upgrade deposits execute and prove | `rust/kona/tests/proofs`: `TestActivationBlockNUTBundle` |
+| Lagoon Keystore deployment hashes and gas | `op-node/rollup/derive`: `TestLagoonKeystoreDeployments`, `TestLagoonKeystoreDeploymentsFitTheirGas`; `kona-hardforks`: `keystore_deployments_follow_the_bundle` |
 | `0x7E` encoding and hash against op-geth | `op-core/types`: `TestDepositTxMarshalBinaryDifferential`, `TestDepositHashParity` |
 | Execution golden vectors | `revm-ee-tests`: the deposit and halted-deposit vectors |
 | Karst cap exemption | `alloy-op-evm`: the deposit gas-cap test |

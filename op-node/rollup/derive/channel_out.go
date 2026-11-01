@@ -56,6 +56,9 @@ type ChannelOut interface {
 	ID() ChannelID
 	Reset() error
 	AddBlock(*rollup.Config, *eth.ExecutionPayload) (*L1BlockInfo, error)
+	// AddProofAggregate adds a proof aggregate batch. l2Time is the time of the latest L2 block
+	// the channel carries, which bounds the channel's RLP size like a block's time does.
+	AddProofAggregate(payload *optypes.ProofAggregatePayload, l2Time uint64) error
 	InputBytes() int
 	ReadyBytes() int
 	Flush() error
@@ -134,6 +137,15 @@ func (co *SingularChannelOut) AddBlock(rollupCfg *rollup.Config, payload *eth.Ex
 // that it returns is ErrTooManyRLPBytes. If this error is returned, the channel
 // should be closed and a new one should be made.
 func (co *SingularChannelOut) addSingularBatch(batch *SingularBatch, _ uint64) error {
+	return co.addBatch(batch, batch.Timestamp)
+}
+
+// AddProofAggregate adds a proof aggregate batch to the channel.
+func (co *SingularChannelOut) AddProofAggregate(payload *optypes.ProofAggregatePayload, l2Time uint64) error {
+	return co.addBatch(&ProofAggregateBatch{Payload: *payload}, l2Time)
+}
+
+func (co *SingularChannelOut) addBatch(batch InnerBatchData, l2Time uint64) error {
 	if co.closed {
 		return ErrChannelOutAlreadyClosed
 	}
@@ -149,7 +161,7 @@ func (co *SingularChannelOut) addSingularBatch(batch *SingularBatch, _ uint64) e
 	// is dependent on the timestamp of the L1 block that this channel got included in. So using the timestamp
 	// of the current batch guarantees that this channel will be included in an L1 block with a timestamp well after
 	// the Fjord activation.
-	maxRLPBytesPerChannel := co.chainSpec.MaxRLPBytesPerChannel(batch.Timestamp)
+	maxRLPBytesPerChannel := co.chainSpec.MaxRLPBytesPerChannel(l2Time)
 	if co.rlpLength+buf.Len() > int(maxRLPBytesPerChannel) {
 		return fmt.Errorf("could not add %d bytes to channel of %d bytes, max is %d. err: %w",
 			buf.Len(), co.rlpLength, maxRLPBytesPerChannel, ErrTooManyRLPBytes)

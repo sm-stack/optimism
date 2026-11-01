@@ -29,6 +29,21 @@ func (c *Config) IsSDM(time uint64) bool {
 	return c.IsLagoon(time)
 }
 
+// IsProofAggregation gates proof aggregation: when false, a proof aggregate batch is an unknown
+// batch type and ends its channel during derivation. Defers to the hardfork where the feature is
+// activated, matching op-reth's `is_proof_aggregation_active_at_timestamp` and kona's
+// `is_proof_aggregation_active`.
+func (c *Config) IsProofAggregation(time uint64) bool {
+	return c.IsLagoon(time)
+}
+
+// IsAaTx gates EIP-8430 transactions: when false, batches carrying EIP-8430 (0x79) transactions
+// are rejected during derivation. Defers to Lagoon, the fork at which op-reth executes them,
+// matching op-reth's `is_aa_tx_active_at_timestamp` and kona's `is_aa_tx_active`.
+func (c *Config) IsAaTx(time uint64) bool {
+	return c.IsLagoon(time)
+}
+
 // IsInterop returns true if the interoperability feature is active at or past the given timestamp.
 // The feature defers to the hardfork where interop is activated; this toggle exists so the feature
 // can be decoupled from the fork if needed.

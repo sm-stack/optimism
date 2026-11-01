@@ -1290,3 +1290,11 @@ func TestConfig_ActivateAtGenesis(t *testing.T) {
 		require.Zero(t, cfg)
 	})
 }
+
+func TestSyncLookbackCoversTheDependencyScanWindow(t *testing.T) {
+	cfg := &Config{SeqWindowSize: 3600}
+	require.Equal(t, uint64(3600), cfg.SyncLookback())
+	lagoon := uint64(0)
+	cfg.LagoonTime = &lagoon
+	require.Equal(t, uint64(3600+DependencyScanWindow), cfg.SyncLookback())
+}

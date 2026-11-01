@@ -83,6 +83,31 @@ func (txData *spanBatchPostExecTxData) DecodeRLP(s *rlp.Stream) error {
 	return nil
 }
 
+// spanBatchAaTxData carries an EIP-8430 (0x79) transaction: its RLP payload, stored verbatim like a
+// post-exec payload. Its nonce, gas limit, sender and authorizations all live in the payload, so
+// its transposed span batch slots are zero.
+type spanBatchAaTxData struct {
+	Data []byte
+}
+
+func (txData *spanBatchAaTxData) txType() byte { return optypes.AaTxType }
+
+// EncodeRLP writes the transaction payload bytes directly.
+func (txData *spanBatchAaTxData) EncodeRLP(w io.Writer) error {
+	_, err := w.Write(txData.Data)
+	return err
+}
+
+// DecodeRLP captures the complete transaction payload value.
+func (txData *spanBatchAaTxData) DecodeRLP(s *rlp.Stream) error {
+	data, err := s.Raw()
+	if err != nil {
+		return err
+	}
+	txData.Data = data
+	return nil
+}
+
 // Type returns the transaction type.
 func (tx *spanBatchTx) Type() uint8 {
 	return tx.inner.txType()
@@ -143,6 +168,13 @@ func (tx *spanBatchTx) decodeTyped(b []byte) (spanBatchTxData, error) {
 		err := rlp.DecodeBytes(b[1:], &inner)
 		if err != nil {
 			return nil, fmt.Errorf("failed to decode spanBatchPostExecTxData: %w", err)
+		}
+		return &inner, nil
+	case optypes.AaTxType:
+		var inner spanBatchAaTxData
+		err := rlp.DecodeBytes(b[1:], &inner)
+		if err != nil {
+			return nil, fmt.Errorf("failed to decode spanBatchAaTxData: %w", err)
 		}
 		return &inner, nil
 	default:
@@ -246,6 +278,9 @@ func (tx *spanBatchTx) convertToFullTx(nonce, gas uint64, to *common.Address, ch
 		postExecTxInner := tx.inner.(*spanBatchPostExecTxData)
 		postExecTx := optypes.PostExecTx{Data: common.CopyBytes(postExecTxInner.Data)}
 		return postExecTx.MarshalBinary()
+	case optypes.AaTxType:
+		inner := tx.inner.(*spanBatchAaTxData)
+		return append([]byte{optypes.AaTxType}, inner.Data...), nil
 	default:
 		return nil, fmt.Errorf("invalid tx type: %d", tx.Type())
 	}
@@ -254,8 +289,8 @@ func (tx *spanBatchTx) convertToFullTx(nonce, gas uint64, to *common.Address, ch
 
 // newSpanBatchTx converts a signed types.Transaction to spanBatchTx. The OP Stack
 // synthetic transaction classes are not signed transactions and do not pass through
-// here: post-exec transactions are converted from their canonical encoding by
-// spanBatchTxs.addPostExecTx, and deposits are never batched.
+// here: post-exec and EIP-8430 transactions are converted from their canonical encoding by
+// spanBatchTxs.addSyntheticRawTx, and deposits are never batched.
 func newSpanBatchTx(tx *types.Transaction) (*spanBatchTx, error) {
 	var inner spanBatchTxData
 	switch tx.Type() {

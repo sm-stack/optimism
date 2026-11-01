@@ -97,8 +97,11 @@ type DerivationPipeline struct {
 }
 
 // NewDerivationPipeline creates a DerivationPipeline, to turn L1 data into L2 block-inputs.
+// verifyAggregates verifies the proof aggregates that answer for blocks' dependencies; with nil,
+// derivation stops at the first block whose responsible aggregate it would have to verify.
 func NewDerivationPipeline(log log.Logger, rollupCfg *rollup.Config, depSet DependencySet, l1Fetcher L1Fetcher, l1Blobs L1BlobsFetcher,
 	altDA AltDAInputFetcher, l2Source L2Source, metrics Metrics, l1ChainConfig *params.ChainConfig,
+	verifyAggregates ProofAggregateVerifier,
 ) *DerivationPipeline {
 	spec := rollup.NewChainSpec(rollupCfg)
 	// Stages are strung together into a pipeline,
@@ -110,13 +113,16 @@ func NewDerivationPipeline(log log.Logger, rollupCfg *rollup.Config, depSet Depe
 	channelMux := NewChannelMux(log, spec, frameQueue, metrics)
 	chInReader := NewChannelInReader(rollupCfg, log, channelMux, metrics)
 	batchMux := NewBatchMux(log, rollupCfg, chInReader, l2Source)
+	// The dependency scanner reads ahead on its own stages over the same L1 data.
+	scanner := NewDependencyScanner(log, rollupCfg, l1Fetcher, l1Blobs, verifyAggregates)
+	dependencyGate := NewDependencyGate(log, rollupCfg, batchMux, scanner, l2Source)
 	attrBuilder := NewFetchingAttributesBuilder(rollupCfg, l1ChainConfig, depSet, l1Fetcher, l2Source)
-	attributesQueue := NewAttributesQueue(log, rollupCfg, attrBuilder, batchMux)
+	attributesQueue := NewAttributesQueue(log, rollupCfg, attrBuilder, dependencyGate)
 
 	// Reset from ResetEngine then up from L1 Traversal. The stages do not talk to each other during
 	// the ResetEngine, but after the ResetEngine, this is the order in which the stages could talk to each other.
 	// Note: The ResetEngine is the only reset that can fail.
-	stages := []ResettableStage{l1Traversal, l1Src, altDA, frameQueue, channelMux, chInReader, batchMux, attributesQueue}
+	stages := []ResettableStage{l1Traversal, l1Src, altDA, frameQueue, channelMux, chInReader, batchMux, dependencyGate, attributesQueue}
 
 	return &DerivationPipeline{
 		log:       log,
@@ -214,6 +220,11 @@ func (dp *DerivationPipeline) Step(ctx context.Context, pendingSafeHead eth.L2Bl
 	} else if err == io.EOF {
 		// If every stage has returned io.EOF, try to advance the L1 Origin
 		return nil, dp.traversal.AdvanceL1Block(ctx)
+	} else if errors.Is(err, ErrWaitingForL1) {
+		// A stage holds a batch until later L1 data arrives. The origin's own data is not consumed
+		// yet, so idle without advancing it.
+		dp.log.Debug("Derivation waits for later L1 data", "origin", dp.origin, "err", err)
+		return nil, io.EOF
 	} else if errors.Is(err, EngineELSyncing) {
 		return nil, err
 	} else {

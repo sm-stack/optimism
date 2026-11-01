@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"math/big"
 
+	"github.com/ethereum-optimism/optimism/op-core/eip8130"
 	"github.com/ethereum-optimism/optimism/op-core/forks"
 	"github.com/ethereum-optimism/optimism/op-core/predeploys"
 	optypes "github.com/ethereum-optimism/optimism/op-core/types"
@@ -11,11 +12,12 @@ import (
 	"github.com/ethereum/go-ethereum/crypto"
 )
 
-// Interop activates via a JSON NUT bundle (see UpgradeTransactions(forks.Lagoon))
-// that may be wrapped between two hardcoded deposit transactions:
+// Interop activates via a JSON NUT bundle (see UpgradeTransactions(forks.Lagoon)), followed by the
+// Keystore deployments, that may be wrapped between two hardcoded deposit transactions:
 //
 //	[1] interopSetFeatureDeposit           — must run before the bundle so the L2CM
 //	                                    upgrade reads isFeatureEnabled(INTEROP)=true
+//	    the bundle, then keystoreDeposits  — on every chain
 //	[N] interopETHLiquidityFundingDeposit  — runs after the bundle; the only Interop
 //	                                    deposit with non-zero mint and value
 //	                                    (max uint128), so it cannot be expressed
@@ -31,9 +33,24 @@ var (
 	interopETHLiquidityFundData = crypto.Keccak256([]byte("fund()"))[:4]
 )
 
+// Lagoon also deploys the EIP-8130 Keystore and the STATEMENT authenticator, on every chain, right
+// after the bundle: two deposits to the deterministic deployment proxy (salt 0), so both land at the
+// addresses op-core/eip8130 computes. The proxy is permissionless, so anyone may deploy either first:
+// the deposit then fails on the CREATE2 collision, leaving the same code, since the initcode only
+// returns the runtime.
+const (
+	keystoreDeployGas               uint64 = 3_000_000
+	statementAuthenticatorDeployGas uint64 = 300_000
+)
+
+var (
+	keystoreDeploySource               = UpgradeDepositSource{Intent: "Lagoon: deploy EIP-8130 Keystore"}
+	statementAuthenticatorDeploySource = UpgradeDepositSource{Intent: "Lagoon: deploy STATEMENT authenticator"}
+)
+
 // LagoonActivationUpgradeTransactions returns the Lagoon activation deposits and the gas to add to
-// the activation block's gas limit. The NUT bundle always executes. The setFeature and ETHLiquidity
-// funding wrappers execute only when activateInteropContracts is true.
+// the activation block's gas limit. The NUT bundle and the Keystore deployments always execute. The
+// setFeature and ETHLiquidity funding wrappers execute only when activateInteropContracts is true.
 //
 // The gas covers the wrappers either way, so that the amount is independent of the dependency set.
 // See UpgradeGas.
@@ -42,6 +59,12 @@ func LagoonActivationUpgradeTransactions(activateInteropContracts bool) ([]hexut
 	if err != nil {
 		return nil, 0, fmt.Errorf("failed to load Lagoon NUT bundle: %w", err)
 	}
+
+	keystoreTxs, err := keystoreDeposits()
+	if err != nil {
+		return nil, 0, err
+	}
+	bundleTxs = append(bundleTxs, keystoreTxs...)
 
 	if !activateInteropContracts {
 		return bundleTxs, gas, nil
@@ -61,6 +84,47 @@ func LagoonActivationUpgradeTransactions(activateInteropContracts bool) ([]hexut
 	txs = append(txs, bundleTxs...)
 	txs = append(txs, fundingTx)
 	return txs, gas, nil
+}
+
+// keystoreDeposits returns the deposits deploying the Keystore and the STATEMENT authenticator.
+func keystoreDeposits() ([]hexutil.Bytes, error) {
+	var out []hexutil.Bytes
+	for _, dep := range []*optypes.DepositTx{keystoreDeployDeposit(), statementAuthenticatorDeployDeposit()} {
+		raw, err := dep.MarshalBinary()
+		if err != nil {
+			return nil, fmt.Errorf("failed to build Keystore deployment: %w", err)
+		}
+		out = append(out, raw)
+	}
+	return out, nil
+}
+
+func deploymentDeposit(source UpgradeDepositSource, gas uint64, initcode []byte) *optypes.DepositTx {
+	to := eip8130.DeterministicDeploymentProxy
+	return &optypes.DepositTx{
+		SourceHash:          source.SourceHash(),
+		From:                L1InfoDepositerAddress,
+		To:                  &to,
+		Mint:                big.NewInt(0),
+		Value:               big.NewInt(0),
+		Gas:                 gas,
+		IsSystemTransaction: false,
+		Data:                eip8130.DeploymentData(initcode),
+	}
+}
+
+func keystoreDeployDeposit() *optypes.DepositTx {
+	return deploymentDeposit(keystoreDeploySource, keystoreDeployGas, eip8130.KeystoreInitcode())
+}
+
+func statementAuthenticatorDeployDeposit() *optypes.DepositTx {
+	return deploymentDeposit(statementAuthenticatorDeploySource, statementAuthenticatorDeployGas,
+		eip8130.StatementAuthenticatorInitcode())
+}
+
+// keystoreDeployGasTotal is the gas the Keystore deployments occupy in the activation block.
+func keystoreDeployGasTotal() uint64 {
+	return keystoreDeployDeposit().Gas + statementAuthenticatorDeployDeposit().Gas
 }
 
 // interopWrapperGas is the gas the wrapper deposits occupy in the activation block. It is summed

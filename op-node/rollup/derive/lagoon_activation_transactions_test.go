@@ -4,10 +4,19 @@ import (
 	"math/big"
 	"testing"
 
+	"github.com/ethereum-optimism/optimism/op-core/eip8130"
 	"github.com/ethereum-optimism/optimism/op-core/forks"
 	"github.com/ethereum-optimism/optimism/op-core/predeploys"
+	optypes "github.com/ethereum-optimism/optimism/op-core/types"
 	"github.com/ethereum-optimism/optimism/op-node/rollup"
+	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/hexutil"
+	"github.com/ethereum/go-ethereum/core/state"
+	"github.com/ethereum/go-ethereum/core/tracing"
+	"github.com/ethereum/go-ethereum/core/types"
+	"github.com/ethereum/go-ethereum/core/vm/runtime"
+	"github.com/ethereum/go-ethereum/crypto"
+	"github.com/ethereum/go-ethereum/params"
 	"github.com/stretchr/testify/require"
 )
 
@@ -60,20 +69,26 @@ func TestLagoonActivationUpgradeTransactions(t *testing.T) {
 		_, dep := toDepositTxn(t, tx)
 		bundleTxGas += dep.Gas()
 	}
-	wantGas := bundleTxGas + interopSetFeatureGas + interopETHLiquidityFundGas
+	wantGas := bundleTxGas + interopSetFeatureGas + interopETHLiquidityFundGas +
+		keystoreDeployGas + statementAuthenticatorDeployGas
 	require.Equal(t, wantGas, gotGas, "UpgradeTransactions must report the full activation reservation")
+
+	// The Keystore deployments follow the bundle on every chain.
+	keystoreTxs, err := keystoreDeposits()
+	require.NoError(t, err)
+	activationTxs := append(append([]hexutil.Bytes{}, bundleTxs...), keystoreTxs...)
 
 	// Only the tx set varies with the dependency set; the reserved gas covers the wrappers either
 	// way, so the reconstruction can subtract it without knowing the dependency set.
 	singleChainTxs, singleChainGas, err := LagoonActivationUpgradeTransactions(false)
 	require.NoError(t, err)
-	require.Equal(t, bundleTxs, singleChainTxs)
+	require.Equal(t, activationTxs, singleChainTxs)
 	require.Equal(t, wantGas, singleChainGas)
 
 	multiChainTxs, multiChainGas, err := LagoonActivationUpgradeTransactions(true)
 	require.NoError(t, err)
-	require.Len(t, multiChainTxs, len(bundleTxs)+2)
-	require.Equal(t, bundleTxs, multiChainTxs[1:len(multiChainTxs)-1])
+	require.Len(t, multiChainTxs, len(activationTxs)+2)
+	require.Equal(t, activationTxs, multiChainTxs[1:len(multiChainTxs)-1])
 	require.Equal(t, wantGas, multiChainGas)
 
 	// Only the multi-chain branch's deposits actually sum to the reservation.
@@ -135,12 +150,71 @@ func TestUpgradeTransactionsInterop(t *testing.T) {
 	_, depLast := toDepositTxn(t, txs[len(txs)-1])
 	require.Equal(t, last.SourceHash(), depLast.SourceHash())
 
-	// The reserved gas deliberately exceeds these transactions' own limits: it also covers the two
-	// wrapper deposits that only a multi-chain activation emits. See UpgradeGas.
+	// The reserved gas deliberately exceeds these transactions' own limits: it also covers the
+	// Keystore deployments and the two wrapper deposits that only a multi-chain activation emits.
+	// See UpgradeGas.
 	var sumGas uint64
 	for _, tx := range txs {
 		_, dep := toDepositTxn(t, tx)
 		sumGas += dep.Gas()
 	}
-	require.Equal(t, sumGas+interopSetFeatureGas+interopETHLiquidityFundGas, gas)
+	require.Equal(t, sumGas+interopSetFeatureGas+interopETHLiquidityFundGas+keystoreDeployGasTotal(), gas)
+}
+
+// The Keystore deployments call the deterministic deployment proxy with salt 0 and the committed
+// initcode, from the depositor account, so the contracts land at the addresses op-core/eip8130
+// computes.
+func TestLagoonKeystoreDeployments(t *testing.T) {
+	for _, dep := range []*optypes.DepositTx{keystoreDeployDeposit(), statementAuthenticatorDeployDeposit()} {
+		require.Equal(t, eip8130.DeterministicDeploymentProxy, *dep.To)
+		require.Equal(t, L1InfoDepositerAddress, dep.From)
+		require.Zero(t, dep.Mint.Sign())
+		require.Zero(t, dep.Value.Sign())
+		require.Equal(t, make([]byte, 32), dep.Data[:32])
+	}
+	require.Equal(t, eip8130.KeystoreInitcode(), keystoreDeployDeposit().Data[32:])
+	require.Equal(t, eip8130.StatementAuthenticatorInitcode(), statementAuthenticatorDeployDeposit().Data[32:])
+
+	// The same hashes as kona's `keystore_deployments_follow_the_bundle`.
+	txs, err := keystoreDeposits()
+	require.NoError(t, err)
+	require.Equal(t, common.HexToHash("0x562344a5a0eec51d8df4b158d6e4c8cb33e32e3ff279a400bbbe3e15a2c14a4a"), crypto.Keccak256Hash(txs[0]))
+	require.Equal(t, common.HexToHash("0xe5aa8aa037a5bc9285cdeb6de163fa0f47e42765e44a447df351c93eda751aca"), crypto.Keccak256Hash(txs[1]))
+}
+
+// deterministicDeploymentProxyCode is the deterministic deployment proxy's runtime (Preinstalls.sol).
+var deterministicDeploymentProxyCode = common.FromHex("0x7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffe03601600081602082378035828234f58015156039578182fd5b8082525050506014600cf3")
+
+// TestLagoonKeystoreDeploymentsFitTheirGas runs both deployments through the deterministic deployment proxy: each
+// fits its gas limit with room to spare, the EIP-7623 floor included, and leaves the runtime code genesis installs.
+func TestLagoonKeystoreDeploymentsFitTheirGas(t *testing.T) {
+	statedb, err := state.New(types.EmptyRootHash, state.NewDatabaseForTesting())
+	require.NoError(t, err)
+	statedb.SetCode(eip8130.DeterministicDeploymentProxy, deterministicDeploymentProxyCode, tracing.CodeChangeUnspecified)
+	for _, dep := range []*optypes.DepositTx{keystoreDeployDeposit(), statementAuthenticatorDeployDeposit()} {
+		var zeros, nonZeros uint64
+		for _, b := range dep.Data {
+			if b == 0 {
+				zeros++
+			} else {
+				nonZeros++
+			}
+		}
+		intrinsic := params.TxGas + zeros*params.TxDataZeroGas + nonZeros*params.TxDataNonZeroGasEIP2028
+		floor := params.TxGas + (zeros+nonZeros*4)*params.TxCostFloorPerToken
+		require.Less(t, floor, dep.Gas)
+		_, left, err := runtime.Call(*dep.To, dep.Data, &runtime.Config{
+			ChainConfig: params.MergedTestChainConfig,
+			Origin:      dep.From,
+			GasLimit:    dep.Gas - intrinsic,
+			State:       statedb,
+		})
+		require.NoError(t, err)
+		used := dep.Gas - left
+		require.Less(t, used, dep.Gas*9/10, "deployment uses %d of %d gas", used, dep.Gas)
+	}
+	for addr, want := range eip8130.GenesisAccounts() {
+		require.Equal(t, want.Code, statedb.GetCode(addr))
+		require.Equal(t, want.Nonce, statedb.GetNonce(addr))
+	}
 }

@@ -836,15 +836,26 @@ func (c *Config) AltDAEnabled() bool {
 	return c.AltDAConfig != nil
 }
 
+// DependencyScanWindow is the number of L1 blocks after the block that completed a batch's channel
+// within which the aggregate responsible for the batch's EIP-8288 dependencies must be posted: 20
+// minutes of 12 second blocks. It must equal kona's DEPENDENCY_SCAN_WINDOW.
+const DependencyScanWindow = 100
+
 // SyncLookback computes the number of blocks to walk back in order to find the correct L1 origin.
-// In alt-da mode longest possible window is challenge + resolve windows.
+// In alt-da mode longest possible window is challenge + resolve windows. Once transactions
+// may declare dependencies (Lagoon), a block can depend on L1 data up to DependencyScanWindow
+// blocks after its batch, which is at most a sequencing window after its L1 origin.
 func (c *Config) SyncLookback() uint64 {
+	lookback := c.SeqWindowSize
 	if c.AltDAEnabled() {
-		if win := (c.AltDAConfig.DAChallengeWindow + c.AltDAConfig.DAResolveWindow); win > c.SeqWindowSize {
-			return win
+		if win := (c.AltDAConfig.DAChallengeWindow + c.AltDAConfig.DAResolveWindow); win > lookback {
+			lookback = win
 		}
 	}
-	return c.SeqWindowSize
+	if c.LagoonTime != nil {
+		lookback = max(lookback, c.SeqWindowSize+DependencyScanWindow)
+	}
+	return lookback
 }
 
 // Description outputs a banner describing the important parts of rollup configuration in a human-readable form.

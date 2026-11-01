@@ -29,6 +29,10 @@ const (
 	SingularBatchType = 0
 	// SpanBatchType is the Batch version used after Delta hard fork, representing a span of L2 blocks.
 	SpanBatchType = 1
+	// ProofAggregateBatchType is a proof aggregate, accepted once IsProofAggregation holds at the L1
+	// origin. It produces no L2 block: the dependency scanner reads it and the rest of the pipeline
+	// skips it.
+	ProofAggregateBatchType = 2
 )
 
 // Batch contains information to build one or multiple L2 blocks.
@@ -133,6 +137,8 @@ func (b *BatchData) decodeTyped(data []byte) error {
 		inner = new(SingularBatch)
 	case SpanBatchType:
 		inner = new(RawSpanBatch)
+	case ProofAggregateBatchType:
+		inner = new(ProofAggregateBatch)
 	default:
 		return fmt.Errorf("unrecognized batch type: %d", data[0])
 	}
@@ -141,6 +147,15 @@ func (b *BatchData) decodeTyped(data []byte) error {
 	}
 	b.inner = inner
 	return nil
+}
+
+// GetProofAggregateBatch retrieves ProofAggregateBatch from batchData
+func GetProofAggregateBatch(batchData *BatchData) (*ProofAggregateBatch, error) {
+	proofAggregateBatch, ok := batchData.inner.(*ProofAggregateBatch)
+	if !ok {
+		return nil, NewCriticalError(errors.New("failed type assertion to ProofAggregateBatch"))
+	}
+	return proofAggregateBatch, nil
 }
 
 // NewBatchData creates a new BatchData

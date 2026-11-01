@@ -9,6 +9,7 @@ import (
 
 	"github.com/ethereum/go-ethereum/rlp"
 
+	optypes "github.com/ethereum-optimism/optimism/op-core/types"
 	"github.com/ethereum-optimism/optimism/op-node/rollup"
 	"github.com/ethereum-optimism/optimism/op-service/eth"
 )
@@ -260,11 +261,61 @@ func (co *SpanChannelOut) ensureOpenSpanBatch() {
 	if co.maxBlocksPerSpanBatch == 0 || co.spanBatch.GetBlockCount() < co.maxBlocksPerSpanBatch {
 		return
 	}
+	co.sealSpanBatch()
+}
+
+// AddProofAggregate seals the open span batch and adds a proof aggregate batch after it. The
+// aggregate ends the channel, so it may pass the compression target, adding frames past it, but
+// never the RLP bound: the channel's blocks and the aggregate then share a last part-filled frame,
+// instead of the blocks ending part-filled and the aggregate starting a channel of its own. A
+// channel already full by its target takes it too, until it is closed: the batcher holds such a
+// channel for its blocks' aggregate. (A singular channel's compressor refuses a write past its
+// target; there the aggregate still goes alone.)
+func (co *SpanChannelOut) AddProofAggregate(payload *optypes.ProofAggregatePayload, l2Time uint64) error {
+	if co.closed {
+		return ErrChannelOutAlreadyClosed
+	}
+	// The active buffer holds what was last compressed. A block refused for the target was
+	// appended to the open span batch and encoded in the inactive buffer only, so both drop it.
+	co.sealActiveRLP()
+	co.swapRLP()
+	active := co.activeRLP()
+	active.Truncate(co.sealedRLPBytes)
+	if err := rlp.Encode(active, NewBatchData(&ProofAggregateBatch{Payload: *payload})); err != nil {
+		return fmt.Errorf("failed to encode proof aggregate batch: %w", err)
+	}
+	revert := func(err error) error {
+		co.swapRLP()
+		if cerr := co.compress(); cerr != nil {
+			return cerr
+		}
+		return err
+	}
+	if maxRLPBytesPerChannel := co.chainSpec.MaxRLPBytesPerChannel(l2Time); active.Len() > int(maxRLPBytesPerChannel) {
+		return revert(fmt.Errorf("could not take a %d byte proof aggregate, max is %d. err: %w",
+			active.Len()-co.sealedRLPBytes, maxRLPBytesPerChannel, ErrTooManyRLPBytes))
+	}
+	if err := co.compress(); err != nil {
+		return err
+	}
+	// Blocks after the aggregate start a new span batch.
+	co.sealSpanBatch()
+	return nil
+}
+
+// sealSpanBatch closes the open span batch: later items are written after its encoding, which
+// both RLP buffers keep.
+func (co *SpanChannelOut) sealSpanBatch() {
 	// we assume that the full span batch has been written to the last active rlp buffer
-	active, inactive := co.activeRLP(), co.inactiveRLP()
-	if inactive.Len() > active.Len() {
+	if co.inactiveRLP().Len() > co.activeRLP().Len() {
 		panic("inactive rlp unexpectedly larger")
 	}
+	co.sealActiveRLP()
+}
+
+// sealActiveRLP seals what the active RLP buffer holds and drops the open span batch.
+func (co *SpanChannelOut) sealActiveRLP() {
+	active, inactive := co.activeRLP(), co.inactiveRLP()
 	co.sealedRLPBytes = active.Len()
 	// Copy active to inactive rlp buffer so both have the same sealed state
 	// and resetting by truncation works as intended.
