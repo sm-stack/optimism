@@ -183,6 +183,9 @@ impl SingleBatch {
                 Ok(OpTxType::PostExec) if !cfg.is_sdm_active(self.timestamp) => {
                     return BatchValidity::Drop(BatchDropReason::PostExecPreLagoon);
                 }
+                Ok(OpTxType::Aa) if !cfg.is_aa_tx_active(self.timestamp) => {
+                    return BatchValidity::Drop(BatchDropReason::AaTxInactive);
+                }
                 _ => {}
             }
         }
@@ -560,6 +563,80 @@ mod tests {
         assert_eq!(
             single_batch.check_batch(&cfg, &l1_blocks, l2_safe_head, &inclusion_block),
             BatchValidity::Drop(BatchDropReason::PostExecPreLagoon)
+        );
+    }
+
+    /// An EIP-8430 (`0x79`) transaction is dropped before Lagoon and accepted after.
+    #[test]
+    fn test_check_batch_aa_tx_gated_by_lagoon() {
+        let mut transactions = example_transactions();
+        // Only the type byte matters to this check.
+        transactions.push(vec![0x79, 0xc0].into());
+        let single_batch = SingleBatch {
+            parent_hash: BlockHash::ZERO,
+            epoch_num: 1,
+            epoch_hash: BlockHash::ZERO,
+            timestamp: 1,
+            transactions,
+        };
+        let l1_blocks = vec![BlockInfo::default(), BlockInfo::default()];
+        let l2_safe_head = L2BlockInfo {
+            block_info: BlockInfo { timestamp: 1, ..Default::default() },
+            ..Default::default()
+        };
+        let inclusion_block = BlockInfo::default();
+
+        let cfg = RollupConfig { max_sequencer_drift: 1, ..Default::default() };
+        assert_eq!(
+            single_batch.check_batch(&cfg, &l1_blocks, l2_safe_head, &inclusion_block),
+            BatchValidity::Drop(BatchDropReason::AaTxInactive)
+        );
+        let cfg = RollupConfig {
+            max_sequencer_drift: 1,
+            hardforks: HardForkConfig { lagoon_time: Some(0), ..Default::default() },
+            ..Default::default()
+        };
+        assert_eq!(
+            single_batch.check_batch(&cfg, &l1_blocks, l2_safe_head, &inclusion_block),
+            BatchValidity::Accept
+        );
+    }
+
+    /// A `0x06` transaction (the removed frame transaction) is no transaction type: the batch stage
+    /// accepts it whatever the fork and execution rejects it (op-node:
+    /// `TestCheckSequencerTxDataUnknownType`).
+    #[test]
+    fn test_check_batch_accepts_an_unknown_type() {
+        let mut transactions = example_transactions();
+        // Only the type byte matters to this check.
+        transactions.push(vec![0x06, 0xc0].into());
+        let single_batch = SingleBatch {
+            parent_hash: BlockHash::ZERO,
+            epoch_num: 1,
+            epoch_hash: BlockHash::ZERO,
+            timestamp: 1,
+            transactions,
+        };
+        let l1_blocks = vec![BlockInfo::default(), BlockInfo::default()];
+        let l2_safe_head = L2BlockInfo {
+            block_info: BlockInfo { timestamp: 1, ..Default::default() },
+            ..Default::default()
+        };
+        let inclusion_block = BlockInfo::default();
+
+        let cfg = RollupConfig { max_sequencer_drift: 1, ..Default::default() };
+        assert_eq!(
+            single_batch.check_batch(&cfg, &l1_blocks, l2_safe_head, &inclusion_block),
+            BatchValidity::Accept
+        );
+        let cfg = RollupConfig {
+            max_sequencer_drift: 1,
+            hardforks: HardForkConfig { lagoon_time: Some(0), ..Default::default() },
+            ..Default::default()
+        };
+        assert_eq!(
+            single_batch.check_batch(&cfg, &l1_blocks, l2_safe_head, &inclusion_block),
+            BatchValidity::Accept
         );
     }
 

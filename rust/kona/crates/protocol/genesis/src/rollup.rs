@@ -18,6 +18,13 @@ pub const FJORD_MAX_SEQUENCER_DRIFT: u64 = 1800;
 /// The channel timeout once the Granite hardfork is active.
 pub const GRANITE_CHANNEL_TIMEOUT: u64 = 50;
 
+/// L1 blocks after the block that completed a batch's channel within which the aggregate
+/// responsible for the batch's [EIP-8288] dependencies must be posted: 20 minutes of 12 second
+/// blocks. It must equal op-node's `rollup.DependencyScanWindow`.
+///
+/// [EIP-8288]: https://eips.ethereum.org/EIPS/eip-8288
+pub const DEPENDENCY_SCAN_WINDOW: u64 = 100;
+
 #[cfg(feature = "serde")]
 const fn default_granite_channel_timeout() -> u64 {
     GRANITE_CHANNEL_TIMEOUT
@@ -272,6 +279,24 @@ impl RollupConfig {
         self.is_lagoon_active(timestamp)
     }
 
+    /// Returns true if proof aggregation is active at the given timestamp.
+    ///
+    /// Delegates to [`OpHardforks::is_proof_aggregation_active_at_timestamp`], the single
+    /// activation gate for the feature, which gates proof aggregate batches. op-node's counterpart
+    /// is `IsProofAggregation`.
+    #[must_use]
+    pub fn is_proof_aggregation_active(&self, timestamp: u64) -> bool {
+        OpHardforks::is_proof_aggregation_active_at_timestamp(self, timestamp)
+    }
+
+    /// Returns true if EIP-8430 transactions (type `0x79`) are active at the given timestamp.
+    /// Delegates to [`OpHardforks::is_aa_tx_active_at_timestamp`]; op-node's counterpart is
+    /// `IsAaTx`.
+    #[must_use]
+    pub fn is_aa_tx_active(&self, timestamp: u64) -> bool {
+        OpHardforks::is_aa_tx_active_at_timestamp(self, timestamp)
+    }
+
     /// Returns true if Jovian is active at the given timestamp.
     pub fn is_jovian_active(&self, timestamp: u64) -> bool {
         self.hardforks.jovian_time.is_some_and(|t| timestamp >= t) ||
@@ -299,6 +324,19 @@ impl RollupConfig {
     /// Returns true if Lagoon is active at the given timestamp.
     pub fn is_lagoon_active(&self, timestamp: u64) -> bool {
         self.hardforks.lagoon_time.is_some_and(|t| timestamp >= t)
+    }
+
+    /// The number of L1 blocks to walk back from the unsafe head's L1 origin to find a safe head
+    /// whose derivation no reorg above it can change: a sequencing window, plus the dependency
+    /// scan window once transactions may declare dependencies (Lagoon), since such a block
+    /// can depend on L1 data up to [`DEPENDENCY_SCAN_WINDOW`] blocks after its batch. Mirrors
+    /// op-node's `SyncLookback`.
+    pub const fn sync_lookback(&self) -> u64 {
+        if self.hardforks.lagoon_time.is_some() {
+            self.seq_window_size.saturating_add(DEPENDENCY_SCAN_WINDOW)
+        } else {
+            self.seq_window_size
+        }
     }
 
     /// Returns true if `timestamp` is `fork`'s activation block — `fork` is active at `timestamp`

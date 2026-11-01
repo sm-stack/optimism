@@ -9,6 +9,7 @@
 //! The batch type is encoded as a single byte:
 //! - `0x00` for a `SingleBatch`
 //! - `0x01` for a `SpanBatch`
+//! - `0x02` for a proof aggregate, from Lagoon
 
 use alloy_rlp::{Decodable, Encodable};
 
@@ -18,6 +19,9 @@ pub const SINGLE_BATCH_TYPE: u8 = 0x00;
 /// The span batch type identifier.
 pub const SPAN_BATCH_TYPE: u8 = 0x01;
 
+/// The proof aggregate batch type identifier.
+pub const PROOF_AGGREGATE_BATCH_TYPE: u8 = 0x02;
+
 /// The Batch Type.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[repr(u8)]
@@ -26,6 +30,8 @@ pub enum BatchType {
     Single = SINGLE_BATCH_TYPE,
     /// Span Batch.
     Span = SPAN_BATCH_TYPE,
+    /// Proof aggregate.
+    ProofAggregate = PROOF_AGGREGATE_BATCH_TYPE,
 }
 
 impl TryFrom<u8> for BatchType {
@@ -35,6 +41,7 @@ impl TryFrom<u8> for BatchType {
         match val {
             SINGLE_BATCH_TYPE => Ok(Self::Single),
             SPAN_BATCH_TYPE => Ok(Self::Span),
+            PROOF_AGGREGATE_BATCH_TYPE => Ok(Self::ProofAggregate),
             _ => Err(val),
         }
     }
@@ -45,6 +52,7 @@ impl Encodable for BatchType {
         let val = match self {
             Self::Single => SINGLE_BATCH_TYPE,
             Self::Span => SPAN_BATCH_TYPE,
+            Self::ProofAggregate => PROOF_AGGREGATE_BATCH_TYPE,
         };
         val.encode(out);
     }
@@ -75,12 +83,13 @@ mod test {
     fn test_try_from_valid_types() {
         assert_eq!(BatchType::try_from(SINGLE_BATCH_TYPE), Ok(BatchType::Single));
         assert_eq!(BatchType::try_from(SPAN_BATCH_TYPE), Ok(BatchType::Span));
+        assert_eq!(BatchType::try_from(PROOF_AGGREGATE_BATCH_TYPE), Ok(BatchType::ProofAggregate));
     }
 
     #[test]
     fn test_try_from_unknown_type_returns_error() {
         assert_eq!(BatchType::try_from(0xFF), Err(0xFF));
-        assert_eq!(BatchType::try_from(0x02), Err(0x02));
+        assert_eq!(BatchType::try_from(0x03), Err(0x03));
     }
 
     #[test]

@@ -826,7 +826,7 @@ mod tests {
         Arc::new(DependencySet { dependencies, override_message_expiry_window: None })
     }
 
-    /// Interop-activated, single-chain `dep-set` → bundle txs only.
+    /// Interop-activated, single-chain `dep-set` → bundle and Keystore deployment txs only.
     #[tokio::test]
     async fn test_prepare_payload_with_interop_single_chain() {
         let block_time = 2;
@@ -859,9 +859,9 @@ mod tests {
             seq_num: 0,
         };
         let payload = builder.prepare_payload_attributes(l2_parent, epoch).await.unwrap();
-        // 1 L1InfoTx + 28 bundle txs. Single-chain superchains skip only the
-        // setFeature and ETHLiquidity funding wrappers.
-        assert_eq!(payload.transactions.unwrap().len(), 1 + 28);
+        // 1 L1InfoTx + 28 bundle txs + 2 Keystore deployments. Single-chain superchains skip only
+        // the setFeature and ETHLiquidity funding wrappers.
+        assert_eq!(payload.transactions.unwrap().len(), 1 + 28 + 2);
     }
 
     /// Interop-activated, multi-chain `dep-set` → full bundle wrapped with setFeature + funding.
@@ -897,8 +897,9 @@ mod tests {
             seq_num: 0,
         };
         let payload = builder.prepare_payload_attributes(l2_parent, epoch).await.unwrap();
-        // 1 L1InfoTx + 30 interop txs (1 setFeature + 28 bundle + 1 ETHLiquidity funding).
-        assert_eq!(payload.transactions.unwrap().len(), 1 + 30);
+        // 1 L1InfoTx + 32 interop txs (1 setFeature + 28 bundle + 2 Keystore deployments + 1
+        // ETHLiquidity funding).
+        assert_eq!(payload.transactions.unwrap().len(), 1 + 32);
     }
 
     /// The Lagoon activation block reserves the same upgrade gas for every dependency-set size.

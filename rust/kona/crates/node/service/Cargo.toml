@@ -13,6 +13,7 @@ workspace = true
 
 [dependencies]
 # workspace
+op-leanvm-tree.workspace = true
 kona-gossip.workspace = true
 kona-disc.workspace = true
 kona-engine.workspace = true

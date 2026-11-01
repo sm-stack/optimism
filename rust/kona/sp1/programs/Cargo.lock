@@ -1934,6 +1934,7 @@ dependencies = [
  "kona-proof-interop",
  "kona-registry",
  "kona-sp1-client-utils",
+ "op-alloy-consensus",
  "revm",
  "spin 0.10.0",
 ]

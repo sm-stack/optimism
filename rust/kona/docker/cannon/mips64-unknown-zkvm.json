@@ -6,7 +6,7 @@
   "target-endian": "big",
   "target-pointer-width": 64,
   "target-c-int-width": 32,
-  "os": "none",
+  "os": "zkvm",
   "abi": "abi64",
   "llvm-abiname": "n64",
   "features": "+soft-float,+mips64",

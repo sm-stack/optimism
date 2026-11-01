@@ -2,7 +2,7 @@
 
 use alloc::{format, string::String};
 use alloy_primitives::Address;
-use op_revm::{OpSpecId, precompiles::OpPrecompiles};
+use op_revm::{OpSpecId, aa::context as tx_context, precompiles::OpPrecompiles};
 #[cfg(target_os = "zkvm")]
 use revm::precompile::PrecompileId;
 use revm::{
@@ -147,6 +147,9 @@ where
         context: &mut CTX,
         inputs: &CallInputs,
     ) -> Result<Option<Self::Output>, String> {
+        if let Some(result) = tx_context::intercept(self.spec, context, inputs) {
+            return Ok(Some(result));
+        }
         let Some(precompile) = self.inner.precompiles.get(&inputs.bytecode_address) else {
             return Ok(None);
         };
@@ -222,6 +225,7 @@ mod tests {
     };
 
     use super::*;
+    use op_alloy_consensus::TX_CONTEXT_ADDRESS;
 
     #[test]
     fn karst_bn254_pairing_uses_fork_input_cap() {
@@ -269,5 +273,46 @@ mod tests {
         assert_eq!(result.gas.remaining(), 0, "non-OOG precompile halt must spend all gas");
         assert_eq!(result.gas.total_gas_spent(), gas_limit);
         assert!(result.output.is_empty());
+    }
+
+    fn tx_context_call(input: &[u8]) -> CallInputs {
+        CallInputs {
+            input: CallInput::Bytes(input.to_vec().into()),
+            return_memory_offset: 0..0,
+            gas_limit: 100,
+            reservoir: 0,
+            bytecode_address: TX_CONTEXT_ADDRESS,
+            known_bytecode: (B256::ZERO, Bytecode::default()),
+            target_address: TX_CONTEXT_ADDRESS,
+            caller: Address::ZERO,
+            value: CallValue::Transfer(U256::ZERO),
+            scheme: CallScheme::StaticCall,
+            is_static: true,
+            charged_new_account_state_gas: false,
+        }
+    }
+
+    /// From Lagoon the guest serves the Transaction Context precompile itself:
+    /// `getTransactionPayer()` reports `tx.origin` for a transaction that published no context,
+    /// and an input no getter takes reverts without using gas.
+    #[test]
+    fn lagoon_serves_the_transaction_context() {
+        let mut context = Context::op().with_cfg(CfgEnv::new_with_spec(OpSpecId::LAGOON));
+        context.tx.base.caller = Address::repeat_byte(0x0a);
+        let mut precompiles = OpZkvmPrecompiles::new_with_spec(OpSpecId::LAGOON);
+
+        let result = precompiles
+            .run(&mut context, &tx_context_call(&[0x69, 0x0b, 0x3a, 0x9d]))
+            .unwrap()
+            .expect("the context precompile answers");
+        assert_eq!(result.result, InstructionResult::Return);
+        assert_eq!(Address::from_slice(&result.output[12..]), Address::repeat_byte(0x0a));
+
+        let result = precompiles
+            .run(&mut context, &tx_context_call(&[0x69, 0x0b, 0x3a, 0x9d, 0]))
+            .unwrap()
+            .expect("the context precompile answers");
+        assert_eq!(result.result, InstructionResult::Revert);
+        assert_eq!(result.gas.remaining(), 100);
     }
 }

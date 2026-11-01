@@ -1,6 +1,8 @@
 //! Module containing the [`BatchWithInclusionBlock`] struct.
 
-use crate::{Batch, BatchValidationProvider, BatchValidity, BlockInfo, L2BlockInfo};
+use crate::{
+    Batch, BatchDropReason, BatchValidationProvider, BatchValidity, BlockInfo, L2BlockInfo,
+};
 use kona_genesis::RollupConfig;
 
 /// A batch with its inclusion block.
@@ -39,6 +41,8 @@ impl BatchWithInclusionBlock {
                     .check_batch(cfg, l1_blocks, l2_safe_head, &self.inclusion_block, fetcher)
                     .await
             }
+            // The channel reader keeps proof aggregates from the batch stages.
+            Batch::ProofAggregate(_) => BatchValidity::Drop(BatchDropReason::ProofAggregate),
         }
     }
 }

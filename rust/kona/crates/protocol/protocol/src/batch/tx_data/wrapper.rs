@@ -39,6 +39,11 @@ impl Decodable for SpanBatchPostExecTransactionData {
     }
 }
 
+/// EIP-8430 (`0x79`) transaction data within a span batch: the transaction's RLP payload, carried
+/// verbatim like a `PostExec` payload. Its nonce, gas limit, sender and authorizations all live in
+/// the payload, so its span batch slots are zero.
+pub type SpanBatchAaTransactionData = SpanBatchPostExecTransactionData;
+
 /// The typed transaction data for a transaction within a span batch.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SpanBatchTransactionData {
@@ -52,6 +57,8 @@ pub enum SpanBatchTransactionData {
     Eip7702(SpanBatchEip7702TransactionData),
     /// `PostExec` transaction data.
     PostExec(SpanBatchPostExecTransactionData),
+    /// EIP-8430 transaction data.
+    Aa(SpanBatchAaTransactionData),
 }
 
 impl Encodable for SpanBatchTransactionData {
@@ -74,6 +81,10 @@ impl Encodable for SpanBatchTransactionData {
             }
             Self::PostExec(data) => {
                 out.put_u8(u8::from(OpTxType::PostExec));
+                data.encode(out);
+            }
+            Self::Aa(data) => {
+                out.put_u8(u8::from(OpTxType::Aa));
                 data.encode(out);
             }
         }
@@ -148,6 +159,7 @@ impl SpanBatchTransactionData {
             Self::Eip1559(_) => OpTxType::Eip1559,
             Self::Eip7702(_) => OpTxType::Eip7702,
             Self::PostExec(_) => OpTxType::PostExec,
+            Self::Aa(_) => OpTxType::Aa,
         }
     }
 
@@ -172,6 +184,7 @@ impl SpanBatchTransactionData {
             OpTxType::PostExec => {
                 Ok(Self::PostExec(SpanBatchPostExecTransactionData::decode(&mut &b[1..])?))
             }
+            OpTxType::Aa => Ok(Self::Aa(SpanBatchAaTransactionData::decode(&mut &b[1..])?)),
             OpTxType::Legacy | OpTxType::Deposit => {
                 Err(alloy_rlp::Error::Custom("Invalid transaction type"))
             }
@@ -211,7 +224,7 @@ impl SpanBatchTransactionData {
                 };
                 TxEnvelope::Eip7702(data.to_signed_tx(nonce, gas, addr, chain_id, signature)?)
             }
-            Self::PostExec(_) => {
+            Self::PostExec(_) | Self::Aa(_) => {
                 return Err(SpanBatchError::Decoding(SpanDecodingError::InvalidTransactionData));
             }
         })
@@ -231,6 +244,12 @@ impl SpanBatchTransactionData {
             Self::PostExec(data) => {
                 let mut out = Vec::with_capacity(1 + data.data.len());
                 out.push(u8::from(OpTxType::PostExec));
+                out.extend_from_slice(data.data.as_ref());
+                Ok(out)
+            }
+            Self::Aa(data) => {
+                let mut out = Vec::with_capacity(1 + data.data.len());
+                out.push(u8::from(OpTxType::Aa));
                 out.extend_from_slice(data.data.as_ref());
                 Ok(out)
             }

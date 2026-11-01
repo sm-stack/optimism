@@ -44,6 +44,9 @@ where
     pub next_batch: Option<BatchReader>,
     /// The rollup configuration.
     pub cfg: Arc<RollupConfig>,
+    /// Whether to return proof aggregate batches, for the dependency scanner. The pipeline's own
+    /// reader skips them.
+    pub proof_aggregates: bool,
 }
 
 impl<P> ChannelReader<P>
@@ -52,7 +55,13 @@ where
 {
     /// Create a new [`ChannelReader`] stage.
     pub const fn new(prev: P, cfg: Arc<RollupConfig>) -> Self {
-        Self { prev, next_batch: None, cfg }
+        Self { prev, next_batch: None, cfg, proof_aggregates: false }
+    }
+
+    /// Makes the reader return proof aggregate batches, as the dependency scanner needs.
+    pub const fn with_proof_aggregates(mut self) -> Self {
+        self.proof_aggregates = true;
+        self
     }
 
     /// Creates the batch reader from available channel data.
@@ -150,6 +159,10 @@ where
 
         // Read the next batch from the reader's decompressed data
         match next_batch.next_batch(self.cfg.as_ref()).ok_or(PipelineError::NotEnoughData.temp()) {
+            // The pipeline skips a proof aggregate and keeps reading the channel.
+            Ok(Batch::ProofAggregate(_)) if !self.proof_aggregates => {
+                Err(PipelineError::NotEnoughData.temp())
+            }
             Ok(batch) => {
                 kona_macros::inc!(
                     gauge,
@@ -208,8 +221,9 @@ where
 mod test {
     use super::*;
     use crate::{errors::PipelineErrorKind, test_utils::TestChannelReaderProvider};
-    use alloc::vec;
+    use alloc::{vec, vec::Vec};
     use kona_genesis::HardForkConfig;
+    use kona_protocol::SingleBatch;
 
     fn new_compressed_batch_data() -> Bytes {
         let file_contents =
@@ -300,5 +314,71 @@ mod test {
         assert!(reader.next_batch.is_some());
         reader.flush();
         assert!(reader.next_batch.is_none());
+    }
+
+    /// A channel holding a singular batch, a proof aggregate and another singular batch.
+    fn channel_with_aggregate() -> Bytes {
+        use alloy_rlp::Encodable;
+        use op_alloy_consensus::{PROOF_AGGREGATE_PAYLOAD_VERSION, ProofAggregatePayload};
+        let items = [
+            Batch::Single(SingleBatch { timestamp: 1, ..Default::default() }),
+            Batch::ProofAggregate(ProofAggregatePayload {
+                version: PROOF_AGGREGATE_PAYLOAD_VERSION,
+                through: 5,
+                ..Default::default()
+            }),
+            Batch::Single(SingleBatch { timestamp: 2, ..Default::default() }),
+        ];
+        let mut rlp = Vec::new();
+        for item in items {
+            let mut encoded = Vec::new();
+            item.encode(&mut encoded).unwrap();
+            Bytes::from(encoded).encode(&mut rlp);
+        }
+        miniz_oxide::deflate::compress_to_vec_zlib(&rlp, 6).into()
+    }
+
+    /// Reads batches until the channel ends, as timestamps or "aggregate".
+    async fn read_channel(
+        lagoon_origin: bool,
+        proof_aggregates: bool,
+    ) -> Vec<alloc::string::String> {
+        use alloc::string::ToString;
+        let mut cfg = RollupConfig::default();
+        cfg.hardforks.lagoon_time = Some(if lagoon_origin { 0 } else { u64::MAX });
+        let mock = TestChannelReaderProvider::new(vec![Ok(Some(channel_with_aggregate()))]);
+        let mut reader = ChannelReader::new(mock, Arc::new(cfg));
+        if proof_aggregates {
+            reader = reader.with_proof_aggregates();
+        }
+        let mut out = Vec::new();
+        for _ in 0..10 {
+            match reader.next_batch().await {
+                Ok(Batch::ProofAggregate(_)) => out.push("aggregate".to_string()),
+                Ok(batch) => out.push(batch.timestamp().to_string()),
+                Err(PipelineErrorKind::Temporary(PipelineError::NotEnoughData)) => {
+                    if reader.next_batch.is_none() {
+                        break;
+                    }
+                }
+                Err(_) => break,
+            }
+        }
+        out
+    }
+
+    #[tokio::test]
+    async fn proof_aggregate_batches() {
+        assert_eq!(
+            read_channel(true, false).await,
+            ["1", "2"],
+            "the pipeline skips the aggregate and keeps reading the channel"
+        );
+        assert_eq!(read_channel(true, true).await, ["1", "aggregate", "2"], "the scanner reads it");
+        assert_eq!(
+            read_channel(false, true).await,
+            ["1"],
+            "before Lagoon the type is unknown and ends the channel"
+        );
     }
 }

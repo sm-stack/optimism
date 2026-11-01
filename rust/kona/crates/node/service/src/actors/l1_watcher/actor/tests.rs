@@ -255,7 +255,6 @@ async fn l1_state_queries_read_all_tags_without_new_heads() {
     assert_eq!(state.head_l1.unwrap().number, 100);
     assert_eq!(state.finalized_l1.unwrap().number, 80);
     assert_eq!(state.safe_l1.unwrap().number, 90);
-    assert!(state.current_l1.is_none());
 }
 
 #[tokio::test(start_paused = true)]

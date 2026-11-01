@@ -221,6 +221,7 @@ impl RollupNode {
             l1_derivation_provider,
             l2_derivation_provider,
             self.dependency_set.clone(),
+            Some(Arc::new(op_leanvm_tree::LeanVmTreeVerifier)),
         ))
     }
 
@@ -274,6 +275,7 @@ impl RollupNode {
         &self,
         engine_actor_request_tx: mpsc::Sender<EngineActorRequest>,
         derivation_actor_request_rx: mpsc::Receiver<DerivationActorRequest>,
+        current_l1_tx: watch::Sender<Option<BlockInfo>>,
     ) -> Result<ConfiguredDerivationActor, String> {
         if let Some(provider) = self.derivation_delegate_provider.clone() {
             // L1 Provider for sanity checking Derivation Delegation
@@ -286,8 +288,13 @@ impl RollupNode {
                 derivation_actor_request_rx,
                 provider,
                 l1_provider,
+                current_l1_tx,
             ))))
         } else {
+            // Load the leanVM tree class now: a class that fails to load must stop the node, not
+            // make every leanVM tree aggregate look invalid.
+            op_leanvm_tree::LeanVmTreeVerifier::load()
+                .map_err(|error| format!("Failed to load the leanVM tree class: {error}"))?;
             let pipeline = self
                 .create_pipeline()
                 .await
@@ -297,6 +304,7 @@ impl RollupNode {
                     QueuedDerivationEngineClient { engine_actor_request_tx },
                     derivation_actor_request_rx,
                     pipeline,
+                    current_l1_tx,
                 ),
             )))
         }
@@ -425,6 +433,7 @@ impl RollupNode {
         p2p_rpc_tx: mpsc::Sender<P2pRpcRequest>,
         network_admin_tx: mpsc::Sender<NetworkAdminQuery>,
         l1_watcher_queries_tx: mpsc::Sender<L1WatcherQueries>,
+        current_l1_rx: watch::Receiver<Option<BlockInfo>>,
     ) -> Result<Option<ConfiguredRpcActor>, String> {
         let Some(config) = self.rpc_builder() else {
             return Ok(None);
@@ -446,7 +455,10 @@ impl RollupNode {
             network_admin_tx,
         )?;
         modules
-            .merge(RollupRpc::new(engine_rpc_client.clone(), l1_watcher_queries_tx).into_rpc())
+            .merge(
+                RollupRpc::new(engine_rpc_client.clone(), l1_watcher_queries_tx, current_l1_rx)
+                    .into_rpc(),
+            )
             .map_err(|e| format!("Failed to register rollup module: {e:?}"))?;
         if config.dev_enabled() {
             modules
@@ -523,6 +535,9 @@ impl RollupNode {
         // from the value read at startup.
         let (signer_tx, signer_rx) = watch::channel(self.p2p_config.unsafe_block_signer);
         let (l1_head_updates_tx, l1_head_updates_rx) = watch::channel::<Option<BlockInfo>>(None);
+        // The L1 block derivation has reached: the sync status's `current_l1`, which trails the
+        // L1 head whenever derivation does.
+        let (current_l1_tx, current_l1_rx) = watch::channel::<Option<BlockInfo>>(None);
 
         // ─── actor construction ─────────────────────────────────────────────────────────────
         let (engine_actor, engine_rpc_actor) = self.build_engine_actors(
@@ -533,7 +548,11 @@ impl RollupNode {
         );
 
         let derivation = self
-            .build_derivation_actor(engine_actor_request_tx.clone(), derivation_actor_request_rx)
+            .build_derivation_actor(
+                engine_actor_request_tx.clone(),
+                derivation_actor_request_rx,
+                current_l1_tx,
+            )
             .await?;
 
         // Start the block signer before the network, so a misconfigured or unreachable remote
@@ -585,6 +604,7 @@ impl RollupNode {
                 p2p_rpc_tx,
                 network_admin_tx,
                 l1_query_tx,
+                current_l1_rx,
             )
             .await?;
 

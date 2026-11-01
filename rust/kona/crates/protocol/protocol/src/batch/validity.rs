@@ -44,6 +44,8 @@ pub enum BatchDropReason {
     Eip7702PreIsthmus,
     /// `PostExec` transaction included before Lagoon activation.
     PostExecPreLagoon,
+    /// EIP-8430 transaction (`0x79`) included before Lagoon activation.
+    AaTxInactive,
     /// Non-empty batch in Jovian or Interop transition block.
     NonEmptyTransitionBlock,
 
@@ -68,6 +70,8 @@ pub enum BatchDropReason {
     L2BlockInfoExtractionFailed,
     /// Overlapped block's L1 origin number does not match.
     OverlappedL1OriginMismatch,
+    /// A proof aggregate produces no block.
+    ProofAggregate,
 }
 
 impl core::fmt::Display for BatchDropReason {
@@ -96,6 +100,7 @@ impl core::fmt::Display for BatchDropReason {
             Self::DepositTransaction => write!(f, "batch contains deposit transaction"),
             Self::Eip7702PreIsthmus => write!(f, "EIP-7702 transaction before Isthmus activation"),
             Self::PostExecPreLagoon => write!(f, "PostExec transaction before Lagoon activation"),
+            Self::AaTxInactive => write!(f, "EIP-8430 transaction before Lagoon activation"),
             Self::NonEmptyTransitionBlock => write!(f, "non-empty batch in transition block"),
             Self::SpanBatchPreDelta => write!(f, "span batch received before Delta hard fork"),
             Self::SpanBatchNoNewBlocksPreHolocene => {
@@ -117,6 +122,7 @@ impl core::fmt::Display for BatchDropReason {
             Self::OverlappedL1OriginMismatch => {
                 write!(f, "overlapped block L1 origin number mismatch")
             }
+            Self::ProofAggregate => write!(f, "a proof aggregate produces no block"),
         }
     }
 }

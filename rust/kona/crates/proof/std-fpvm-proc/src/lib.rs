@@ -28,9 +28,14 @@ pub fn client_entry(_: TokenStream, input: TokenStream) -> TokenStream {
                 #[unsafe(no_mangle)]
                 pub extern "C" fn _start() {
                     kona_std_fpvm::alloc_heap!();
+                    #[cfg(target_os = "zkvm")]
+                    kona_std_fpvm::zkvm::install_panic_hook();
                     let _ = #fn_name();
                 }
 
+                // With `os = "zkvm"`, `std` is linked and provides the panic handler; the hook
+                // installed in `_start` keeps the same report-and-exit behavior.
+                #[cfg(not(target_os = "zkvm"))]
                 #[panic_handler]
                 fn panic(info: &core::panic::PanicInfo) -> ! {
                     let msg = alloc::format!("Panic: {}", info);

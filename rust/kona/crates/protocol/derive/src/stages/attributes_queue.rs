@@ -88,7 +88,12 @@ where
                 return Err(e);
             }
         };
-        let origin = self.origin().ok_or(PipelineError::MissingOrigin.crit())?;
+        let mut origin = self.origin().ok_or(PipelineError::MissingOrigin.crit())?;
+        if let Some(decided_at) = self.prev.decided_at() &&
+            decided_at.number > origin.number
+        {
+            origin = decided_at;
+        }
         let populated_attributes =
             OpAttributesWithParent::new(attributes, parent, Some(origin), self.is_last_in_span);
         kona_macros::record!(

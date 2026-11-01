@@ -14,6 +14,7 @@ use kona_derive::{
 use kona_genesis::{L1ChainConfig, RollupConfig, SystemConfig};
 use kona_interop::DependencySet;
 use kona_protocol::{BlockInfo, L2BlockInfo, OpAttributesWithParent};
+use op_alloy_consensus::SharedProofAggregateVerifier;
 use std::sync::Arc;
 
 /// An online polled derivation pipeline.
@@ -57,6 +58,7 @@ impl OnlinePipeline {
         chain_provider: AlloyChainProvider,
         l2_chain_provider: BufferedAlloyL2ChainProvider,
         dependency_set: Option<Arc<DependencySet>>,
+        proof_aggregate_verifier: Option<SharedProofAggregateVerifier>,
     ) -> PipelineResult<Self> {
         let mut pipeline = Self::new_polled(
             cfg.clone(),
@@ -65,6 +67,7 @@ impl OnlinePipeline {
             chain_provider,
             l2_chain_provider.clone(),
             dependency_set,
+            proof_aggregate_verifier,
         );
 
         // Reset the pipeline to populate the initial L1/L2 cursor and system configuration in L1
@@ -88,6 +91,7 @@ impl OnlinePipeline {
         chain_provider: AlloyChainProvider,
         l2_chain_provider: BufferedAlloyL2ChainProvider,
         dependency_set: Option<Arc<DependencySet>>,
+        proof_aggregate_verifier: Option<SharedProofAggregateVerifier>,
     ) -> Self {
         let attributes = StatefulAttributesBuilder::new(
             cfg.clone(),
@@ -104,6 +108,7 @@ impl OnlinePipeline {
             .l2_chain_provider(l2_chain_provider)
             .chain_provider(chain_provider)
             .builder(attributes)
+            .proof_aggregate_verifier(proof_aggregate_verifier)
             .origin(BlockInfo::default())
             .build_polled();
 

@@ -86,8 +86,12 @@ pub type TestBatchStream = BatchStream<TestChannelReader, TestL2ChainProvider>;
 /// A [`BatchProvider`] using test providers and sources.
 pub type TestBatchProvider = BatchProvider<TestBatchStream, TestL2ChainProvider>;
 
+/// A [`DependencyGate`](crate::DependencyGate) using test providers and sources.
+pub type TestDependencyGate =
+    crate::DependencyGate<TestBatchProvider, TestChannelReader, TestL2ChainProvider>;
+
 /// An [`AttributesQueue`] using test providers and sources.
-pub type TestAttributesQueue = AttributesQueue<TestBatchProvider, TestAttributesBuilder>;
+pub type TestAttributesQueue = AttributesQueue<TestDependencyGate, TestAttributesBuilder>;
 
 /// A [`DerivationPipeline`] using test providers and sources.
 pub type TestPipeline = DerivationPipeline<TestAttributesQueue, TestL2ChainProvider>;

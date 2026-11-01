@@ -37,3 +37,6 @@ pub use batch::{
 
 mod attributes_queue;
 pub use attributes_queue::AttributesQueue;
+
+mod dependency;
+pub use dependency::{DEPENDENCY_SCAN_BYTE_CAP, DependencyGate, DependencyScanner, Responsible};

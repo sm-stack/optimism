@@ -85,6 +85,6 @@ mod tests {
         assert_eq!(karst_upgrade_tx.collect::<Vec<_>>().len(), 31);
 
         let interop_upgrade_tx = Hardforks::LAGOON.txs();
-        assert_eq!(interop_upgrade_tx.collect::<Vec<_>>().len(), 30);
+        assert_eq!(interop_upgrade_tx.collect::<Vec<_>>().len(), 32);
     }
 }

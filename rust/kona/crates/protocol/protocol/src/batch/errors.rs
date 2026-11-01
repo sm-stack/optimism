@@ -98,4 +98,8 @@ pub enum SpanDecodingError {
     /// spec fixes for it.
     #[error("Invalid post-exec transaction span batch slots")]
     InvalidPostExecSlots,
+    /// An EIP-8430 (`0x79`) transaction does not carry the zero span batch slot values fixed for
+    /// transactions whose fields all live in their payload.
+    #[error("Invalid EIP-8430 transaction span batch slots")]
+    InvalidAaSlots,
 }

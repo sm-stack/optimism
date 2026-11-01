@@ -14,6 +14,14 @@ pub struct TestDAP {
     pub results: Vec<PipelineResult<Bytes>>,
 }
 
+/// A clone starts with no results: errors cannot be cloned, and only the dependency scanner's
+/// stack takes a clone.
+impl Clone for TestDAP {
+    fn clone(&self) -> Self {
+        Self::default()
+    }
+}
+
 #[async_trait]
 impl DataAvailabilityProvider for TestDAP {
     type Item = Bytes;

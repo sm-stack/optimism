@@ -6,7 +6,7 @@ use crate::PipelineResult;
 use alloc::boxed::Box;
 use alloy_eips::BlockNumHash;
 use async_trait::async_trait;
-use kona_protocol::{L2BlockInfo, OpAttributesWithParent, SingleBatch};
+use kona_protocol::{BlockInfo, L2BlockInfo, OpAttributesWithParent, SingleBatch};
 use op_alloy_rpc_types_engine::OpPayloadAttributes;
 
 /// [`AttributesProvider`] is a trait abstraction that generalizes the [`BatchQueue`] stage.
@@ -19,6 +19,13 @@ pub trait AttributesProvider {
 
     /// Returns whether the current batch is the last in its span.
     fn is_last_in_span(&self) -> bool;
+
+    /// The latest L1 block a dependency decision since the last reset needed, if any: a batch held
+    /// for its dependencies, and every batch after it, is derived from at least the L1 data the
+    /// dependency scan read.
+    fn decided_at(&self) -> Option<BlockInfo> {
+        None
+    }
 }
 
 /// [`NextAttributes`] defines the interface for pulling attributes from

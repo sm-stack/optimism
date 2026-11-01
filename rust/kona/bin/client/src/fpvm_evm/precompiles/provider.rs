@@ -8,7 +8,8 @@ use alloy_primitives::{Address, Bytes};
 use kona_preimage::{HintWriterClient, PreimageOracleClient};
 use op_revm::{
     OpSpecId,
-    precompiles::{fjord, granite, isthmus, jovian, karst},
+    aa::context as tx_context,
+    precompiles::{fjord, granite, isthmus, jovian, karst, lagoon},
 };
 use revm::{
     context::{Cfg, ContextTr},
@@ -52,7 +53,8 @@ where
             OpSpecId::GRANITE | OpSpecId::HOLOCENE => granite(),
             OpSpecId::ISTHMUS => isthmus(),
             OpSpecId::JOVIAN => jovian(),
-            OpSpecId::KARST | OpSpecId::LAGOON => karst(),
+            OpSpecId::KARST => karst(),
+            OpSpecId::LAGOON => lagoon(),
         };
 
         let accelerated_precompiles = match spec {
@@ -108,6 +110,9 @@ where
         inputs: &CallInputs,
     ) -> Result<Option<Self::Output>, String> {
         use revm::context::LocalContextTr;
+        if let Some(result) = tx_context::intercept(self.spec, context, inputs) {
+            return Ok(Some(result));
+        }
         let input = match &inputs.input {
             revm::interpreter::CallInput::Bytes(bytes) => bytes.clone(),
             revm::interpreter::CallInput::SharedBuffer(range) => context
@@ -311,6 +316,7 @@ mod test {
     use super::*;
     use alloy_op_evm::{OpEvmContext, OpTx};
     use kona_preimage::{HintWriterClient, PreimageOracleClient};
+    use op_alloy_consensus::TX_CONTEXT_ADDRESS;
     use op_revm::{L1BlockInfo, OpSpecId, OpTransaction};
     use revm::{
         Context, MainContext,
@@ -394,6 +400,40 @@ mod test {
         let interpreter_result = result.unwrap();
         assert_eq!(interpreter_result.result, InstructionResult::Return);
         assert_eq!(interpreter_result.output.as_ref(), b"mock");
+    }
+
+    /// From Lagoon the provider serves the Transaction Context precompile from what the
+    /// executing transaction published, and `tx.origin` when nothing was.
+    #[test]
+    fn test_lagoon_serves_the_transaction_context() {
+        let (hint_chan, preimage_chan) = (
+            kona_preimage::BidirectionalChannel::new().unwrap(),
+            kona_preimage::BidirectionalChannel::new().unwrap(),
+        );
+        let hint_writer = kona_preimage::HintWriter::new(hint_chan.client);
+        let oracle_reader = kona_preimage::OracleReader::new(preimage_chan.client);
+        let mut precompiles =
+            OpFpvmPrecompiles::new_with_spec(OpSpecId::LAGOON, hint_writer, oracle_reader);
+        let origin = Address::repeat_byte(0x0a);
+        let payer = Address::repeat_byte(0x0b);
+        let mut ctx = create_test_context();
+        ctx.tx.0.base.caller = origin;
+
+        // `getTransactionPayer()`, called directly.
+        let mut inputs = create_call_inputs(
+            TX_CONTEXT_ADDRESS,
+            Bytes::from_static(&[0x69, 0x0b, 0x3a, 0x9d]),
+            100,
+        );
+        inputs.target_address = TX_CONTEXT_ADDRESS;
+        let word = |result: InterpreterResult| {
+            assert_eq!(result.result, InstructionResult::Return);
+            Address::from_slice(&result.output[12..])
+        };
+        assert_eq!(word(precompiles.run(&mut ctx, &inputs).unwrap().unwrap()), origin);
+
+        op_revm::aa::context::publish(&mut ctx.journaled_state, origin, payer, &[]);
+        assert_eq!(word(precompiles.run(&mut ctx, &inputs).unwrap().unwrap()), payer);
     }
 
     /// A mock accelerated precompile that reports spending more gas than the call limit.
@@ -683,8 +723,8 @@ mod test {
             "KARST should use karst() precompiles"
         );
         assert!(
-            core::ptr::eq(lagoon_provider.inner.precompiles, karst()),
-            "LAGOON should use karst() precompiles"
+            core::ptr::eq(lagoon_provider.inner.precompiles, lagoon()),
+            "LAGOON should use lagoon() precompiles"
         );
     }
 

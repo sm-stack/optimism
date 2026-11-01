@@ -15,7 +15,21 @@ use kona_proof::{
     l2::OracleL2ChainProvider,
 };
 use kona_sp1_client_utils::witness::executor::WitnessExecutor;
+use op_alloy_consensus::{ProofAggregateVerifier, ProofStatement};
 use spin::RwLock;
+
+/// The proof aggregate verifier of the SP1 guest, which has none yet: leanVM needs Rust APIs newer
+/// than the SP1 toolchain's, so the guest cannot embed the tree verifier. Verifying an aggregate
+/// panics, so a range whose derivation needs one has no proof: the guest must derive the blocks
+/// the nodes and the Cannon client derive.
+#[derive(Debug)]
+struct UnavailableVerifier;
+
+impl ProofAggregateVerifier for UnavailableVerifier {
+    fn verify(&self, _: &[ProofStatement], _: &[u8], _: &[u8]) -> Result<(), String> {
+        panic!("the SP1 guest cannot verify proof aggregates yet")
+    }
+}
 
 /// An implementation of [`WitnessExecutor`] that uses Ethereum for data availability.
 #[allow(missing_debug_implementations)]
@@ -72,6 +86,7 @@ where
             l1_provider,
             l2_provider,
             Some(self.dependency_set.clone()),
+            Some(Arc::new(UnavailableVerifier)),
         )
         .await?)
     }

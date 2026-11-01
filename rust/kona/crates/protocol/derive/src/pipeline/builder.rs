@@ -2,13 +2,14 @@
 
 use crate::{
     AttributesBuilder, AttributesQueue, BatchProvider, BatchStream, ChainProvider, ChannelProvider,
-    ChannelReader, DataAvailabilityProvider, DerivationPipeline, FrameQueue, L1Retrieval,
-    L2ChainProvider, PolledAttributesQueueStage, PollingTraversal,
+    ChannelReader, DataAvailabilityProvider, DependencyGate, DependencyScanner, DerivationPipeline,
+    FrameQueue, L1Retrieval, L2ChainProvider, PolledAttributesQueueStage, PollingTraversal,
 };
 use alloc::sync::Arc;
 use core::fmt::Debug;
 use kona_genesis::RollupConfig;
 use kona_protocol::BlockInfo;
+use op_alloy_consensus::SharedProofAggregateVerifier;
 
 /// The `PipelineBuilder` constructs a [`DerivationPipeline`] using a builder pattern.
 #[derive(Debug)]
@@ -25,6 +26,7 @@ where
     builder: Option<B>,
     origin: Option<BlockInfo>,
     rollup_config: Option<Arc<RollupConfig>>,
+    proof_aggregate_verifier: Option<SharedProofAggregateVerifier>,
 }
 
 impl<B, P, T, D> Default for PipelineBuilder<B, P, T, D>
@@ -42,6 +44,7 @@ where
             builder: None,
             origin: None,
             rollup_config: None,
+            proof_aggregate_verifier: None,
         }
     }
 }
@@ -51,7 +54,7 @@ where
     B: AttributesBuilder + Send + Debug,
     P: ChainProvider + Clone + Send + Sync + Debug,
     T: L2ChainProvider + Clone + Send + Sync + Debug,
-    D: DataAvailabilityProvider + Send + Sync + Debug,
+    D: DataAvailabilityProvider + Clone + Send + Sync + Debug,
 {
     /// Creates a new pipeline builder.
     pub fn new() -> Self {
@@ -88,6 +91,16 @@ where
         self
     }
 
+    /// Sets the verifier of proof aggregates, which derivation needs to decide blocks with
+    /// EIP-8288 dependencies. Without one, no aggregate proves anything.
+    pub fn proof_aggregate_verifier(
+        mut self,
+        verifier: Option<SharedProofAggregateVerifier>,
+    ) -> Self {
+        self.proof_aggregate_verifier = verifier;
+        self
+    }
+
     /// Sets the chain provider for the pipeline.
     pub fn chain_provider(mut self, chain_provider: P) -> Self {
         self.chain_provider = Some(chain_provider);
@@ -106,7 +119,7 @@ where
     B: AttributesBuilder + Send + Debug,
     P: ChainProvider + Clone + Send + Sync + Debug,
     T: L2ChainProvider + Clone + Send + Sync + Debug,
-    D: DataAvailabilityProvider + Send + Sync + Debug,
+    D: DataAvailabilityProvider + Clone + Send + Sync + Debug,
 {
     fn from(builder: PipelineBuilder<B, P, T, D>) -> Self {
         // Extract the builder fields.
@@ -117,6 +130,26 @@ where
         let attributes_builder = builder.builder.expect("builder must be set");
 
         // Compose the stage stack.
+        // The dependency scanner reads ahead on its own stack over the same L1 data.
+        let scan_traversal =
+            PollingTraversal::new(chain_provider.clone(), Arc::clone(&rollup_config));
+        let scan_stack = ChannelReader::new(
+            ChannelProvider::new(
+                Arc::clone(&rollup_config),
+                FrameQueue::new(
+                    L1Retrieval::new(scan_traversal, dap_source.clone()),
+                    Arc::clone(&rollup_config),
+                ),
+            ),
+            Arc::clone(&rollup_config),
+        )
+        .with_proof_aggregates();
+        let scanner = DependencyScanner::new(
+            scan_stack,
+            Arc::clone(&rollup_config),
+            builder.proof_aggregate_verifier,
+        );
+
         let mut l1_traversal = PollingTraversal::new(chain_provider, Arc::clone(&rollup_config));
         l1_traversal.block = Some(builder.origin.expect("origin must be set"));
         let l1_retrieval = L1Retrieval::new(l1_traversal, dap_source);
@@ -127,8 +160,13 @@ where
             BatchStream::new(channel_reader, rollup_config.clone(), l2_chain_provider.clone());
         let batch_provider =
             BatchProvider::new(rollup_config.clone(), batch_stream, l2_chain_provider.clone());
-        let attributes =
-            AttributesQueue::new(rollup_config.clone(), batch_provider, attributes_builder);
+        let gate = DependencyGate::new(
+            rollup_config.clone(),
+            batch_provider,
+            scanner,
+            l2_chain_provider.clone(),
+        );
+        let attributes = AttributesQueue::new(rollup_config.clone(), gate, attributes_builder);
 
         // Create the pipeline.
         Self::new(attributes, rollup_config, l2_chain_provider)

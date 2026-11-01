@@ -514,6 +514,10 @@ impl SpanBatch {
                         warn!(target: "batch_span", "PostExec transactions are not supported pre-Lagoon. tx_index: {}", i);
                         return BatchValidity::Drop(BatchDropReason::PostExecPreLagoon);
                     }
+                    Ok(OpTxType::Aa) if !cfg.is_aa_tx_active(batch.timestamp) => {
+                        warn!(target: "batch_span", "EIP-8430 transactions are not supported before Lagoon. tx_index: {}", i);
+                        return BatchValidity::Drop(BatchDropReason::AaTxInactive);
+                    }
                     _ => {}
                 }
             }

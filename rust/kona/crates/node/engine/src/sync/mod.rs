@@ -73,8 +73,9 @@ pub async fn find_starting_forkchoice<EngineClient_: EngineClient>(
         }
     }
 
-    // Search for the highest `safe` block that's L1 origin is at least older than the sequencing
-    // window, relative to the L1 origin of the `unsafe` block.
+    // Search for the highest `safe` block that's L1 origin is at least older than the sync lookback
+    // (the sequencing window, plus the dependency scan window after Lagoon), relative to the L1
+    // origin of the `unsafe` block.
     let mut safe_cursor = current_fc.un_safe;
     loop {
         info!(
@@ -85,7 +86,7 @@ pub async fn find_starting_forkchoice<EngineClient_: EngineClient>(
         );
 
         let is_behind_sequence_window =
-            current_fc.un_safe.l1_origin.number.saturating_sub(cfg.seq_window_size) >
+            current_fc.un_safe.l1_origin.number.saturating_sub(cfg.sync_lookback()) >
                 safe_cursor.l1_origin.number;
         let is_finalized = safe_cursor.block_info.hash == current_fc.finalized.block_info.hash;
         let is_genesis = safe_cursor.block_info.hash == cfg.genesis.l2.hash;

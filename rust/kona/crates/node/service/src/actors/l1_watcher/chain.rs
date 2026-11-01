@@ -82,9 +82,8 @@ where
             #[allow(unreachable_code)]
             Ok::<(), L1WatcherActorError<BlockInfo>>(())
         };
-        let signer =
-            Self::refresh_signer(&provider, &rollup_config, &block_signer_sender, head.clone());
-        let queries = Self::serve_queries(&provider, &rollup_config, head, &mut inbound_queries);
+        let signer = Self::refresh_signer(&provider, &rollup_config, &block_signer_sender, head);
+        let queries = Self::serve_queries(&provider, &rollup_config, &mut inbound_queries);
         tokio::try_join!(forward, signer, queries)?;
         Ok(())
     }
@@ -129,7 +128,6 @@ where
     async fn serve_queries(
         provider: &impl Provider,
         config: &RollupConfig,
-        head: tokio::sync::watch::Receiver<Option<BlockInfo>>,
         queries: &mut mpsc::Receiver<L1WatcherQueries>,
     ) -> Result<(), L1WatcherActorError<BlockInfo>> {
         while let Some(query) = queries.recv().await {
@@ -138,18 +136,14 @@ where
                     let _ = sender.send(config.clone());
                 }
                 L1WatcherQueries::L1State(sender) => {
-                    let current = *head.borrow();
-                    let _ = sender.send(Self::l1_state(provider, current).await);
+                    let _ = sender.send(Self::l1_state(provider).await);
                 }
             }
         }
         Err(L1WatcherActorError::StreamEnded)
     }
 
-    async fn l1_state(
-        provider: &impl Provider,
-        current_l1: Option<BlockInfo>,
-    ) -> kona_rpc::L1State {
+    async fn l1_state(provider: &impl Provider) -> kona_rpc::L1State {
         use alloy_eips::BlockId;
         use tokio::time::{Duration, timeout};
         let read = |id| async move {
@@ -166,12 +160,6 @@ where
             read(BlockId::finalized()),
             read(BlockId::safe())
         );
-        kona_rpc::L1State {
-            current_l1,
-            current_l1_finalized: finalized_l1,
-            head_l1,
-            finalized_l1,
-            safe_l1,
-        }
+        kona_rpc::L1State { current_l1_finalized: finalized_l1, head_l1, finalized_l1, safe_l1 }
     }
 }

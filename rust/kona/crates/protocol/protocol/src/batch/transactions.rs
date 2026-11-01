@@ -3,8 +3,8 @@
 
 use super::varint::read_uvarint;
 use crate::{
-    MAX_SPAN_BATCH_ELEMENTS, SpanBatchBits, SpanBatchError, SpanBatchPostExecTransactionData,
-    SpanBatchTransactionData, SpanDecodingError,
+    MAX_SPAN_BATCH_ELEMENTS, SpanBatchAaTransactionData, SpanBatchBits, SpanBatchError,
+    SpanBatchPostExecTransactionData, SpanBatchTransactionData, SpanDecodingError,
 };
 use alloc::vec::Vec;
 use alloy_consensus::{Transaction, TxEnvelope};
@@ -98,6 +98,19 @@ impl SpanBatchTransactionParts {
                 0,
                 None,
                 OpTxType::PostExec,
+            ),
+            OpTxEnvelope::Aa(tx) => (
+                SpanBatchTransactionData::Aa(SpanBatchAaTransactionData {
+                    data: alloy_rlp::encode(tx.inner()).into(),
+                }),
+                // Every field lives in the payload: zero slots, as for the unsigned system
+                // transactions.
+                Signature::new(U256::ZERO, U256::ZERO, false),
+                None,
+                0,
+                0,
+                None,
+                OpTxType::Aa,
             ),
             OpTxEnvelope::Deposit(_) => {
                 return Err(SpanBatchError::Decoding(SpanDecodingError::InvalidTransactionData));
@@ -391,28 +404,31 @@ impl SpanBatchTransactions {
     ///
     /// A violation invalidates the whole span batch: these slots are positional across the span,
     /// so it cannot be attributed to the one block whose transaction carries it.
-    pub fn check_post_exec_slots(&self) -> Result<(), SpanBatchError> {
-        const ERR: SpanBatchError =
-            SpanBatchError::Decoding(SpanDecodingError::InvalidPostExecSlots);
-
+    ///
+    /// The same zero-slot rule applies to EIP-8430 (`0x79`) transactions: their nonce, gas limit,
+    /// sender and signatures all live in their payload.
+    pub fn check_system_tx_slots(&self) -> Result<(), SpanBatchError> {
         for (idx, tx_type) in self.tx_types.iter().enumerate() {
-            if *tx_type != OpTxType::PostExec {
-                continue;
-            }
+            let kind = match tx_type {
+                OpTxType::PostExec => SpanDecodingError::InvalidPostExecSlots,
+                OpTxType::Aa => SpanDecodingError::InvalidAaSlots,
+                _ => continue,
+            };
+            let err = || SpanBatchError::Decoding(kind.clone());
             if self.zero_to_bits.get_bit(idx) != Some(1) {
-                return Err(ERR);
+                return Err(err());
             }
             // kona folds the `y_parity_bits` bit into the signature at decode time, so the
             // parity flag here is that bit.
-            let sig = self.tx_sigs.get(idx).ok_or(ERR)?;
+            let sig = self.tx_sigs.get(idx).ok_or_else(&err)?;
             if !sig.r().is_zero() || !sig.s().is_zero() || sig.v() {
-                return Err(ERR);
+                return Err(err());
             }
-            if *self.tx_nonces.get(idx).ok_or(ERR)? != 0 {
-                return Err(ERR);
+            if *self.tx_nonces.get(idx).ok_or_else(&err)? != 0 {
+                return Err(err());
             }
-            if *self.tx_gases.get(idx).ok_or(ERR)? != 0 {
-                return Err(ERR);
+            if *self.tx_gases.get(idx).ok_or_else(&err)? != 0 {
+                return Err(err());
             }
         }
         Ok(())
@@ -478,7 +494,7 @@ impl SpanBatchTransactions {
                     .set_bit(self.legacy_tx_count as usize, parts.chain_id.is_some());
                 self.legacy_tx_count += 1;
             }
-            if parts.tx_type != OpTxType::PostExec &&
+            if !matches!(parts.tx_type, OpTxType::PostExec | OpTxType::Aa) &&
                 parts.chain_id.is_some_and(|id| id != chain_id)
             {
                 return Err(SpanBatchError::Decoding(SpanDecodingError::InvalidTransactionData));
@@ -657,6 +673,65 @@ mod tests {
         assert_eq!(full_txs, vec![buf]);
     }
 
+    /// The golden EIP-8430 (`0x79`) transaction op-alloy and op-core pin (`TestAaTxGoldenVector`).
+    fn aa_tx_bytes() -> Vec<u8> {
+        alloy_primitives::hex::decode(
+            "79f901f38203859411111111111111111111111111111111111111118003846553f10086018bcfee8fc0830f42\
+             4084773594008303d090f8a6d60194dedededededededededededededededededededef88d04f88af84320a000\
+             00000000000000000000000000000000000000000000000000000000000000a0aaaaaaaaaaaaaaaaaaaaaaaaaa\
+             aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaf84320a0dddddddddddddddddddddddddddddddddddddddddddd\
+             dddddddddddddddddddda0aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaf850\
+             dcdb9422222222222222222222222222222222222222228203e882deadf2d79433333333333333333333333333\
+             333333333333338080d99444444444444444444444444444444444444444448082beef826f7094555555555555\
+             5555555555555555555555555555b8550000000000000000000000000000000000000001666666666666666666\
+             666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666\
+             6666666666666666666666b8550000000000000000000000000000000000000001777777777777777777777777\
+             777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777\
+             7777777777777777",
+        )
+        .unwrap()
+    }
+
+    /// Both clients store an EIP-8430 transaction's payload verbatim as span batch tx data, with
+    /// zero slots, and reconstruct the same bytes (op-node:
+    /// `TestSpanBatchTxsAaTxRoundTripFullTxs`).
+    #[test]
+    fn test_aa_tx_span_batch_golden_vector() {
+        let raw = aa_tx_bytes();
+        let mut txs = SpanBatchTransactions::default();
+        txs.add_txs(vec![Bytes::from(raw.clone())], 901).unwrap();
+        assert_eq!(txs.tx_types, vec![OpTxType::Aa]);
+        assert_eq!(txs.tx_data, vec![raw.clone()]);
+        assert!(txs.tx_tos.is_empty());
+        assert_eq!(txs.check_system_tx_slots(), Ok(()));
+        assert_eq!(txs.full_txs(901).unwrap(), vec![raw.clone()]);
+
+        let mut encoded = Vec::new();
+        txs.encode(&mut encoded).unwrap();
+        let mut decoded = SpanBatchTransactions { total_block_tx_count: 1, ..Default::default() };
+        decoded.decode(&mut encoded.as_slice()).unwrap();
+        assert_eq!(decoded.full_txs(901).unwrap(), vec![raw]);
+    }
+
+    #[test]
+    fn test_check_aa_tx_slots_rejects_tampered_slots() {
+        let err = || SpanBatchError::Decoding(SpanDecodingError::InvalidAaSlots);
+        let txs = || {
+            let mut txs = SpanBatchTransactions::default();
+            txs.add_txs(vec![Bytes::from(aa_tx_bytes())], 901).unwrap();
+            txs
+        };
+        let mut tampered = txs();
+        tampered.zero_to_bits.set_bit(0, false);
+        assert_eq!(tampered.check_system_tx_slots(), Err(err()));
+        let mut tampered = txs();
+        tampered.tx_nonces[0] = 3;
+        assert_eq!(tampered.check_system_tx_slots(), Err(err()));
+        let mut tampered = txs();
+        tampered.tx_gases[0] = 1;
+        assert_eq!(tampered.check_system_tx_slots(), Err(err()));
+    }
+
     /// Builds the span batch transposition of a single post-exec transaction, as a batcher
     /// would encode it.
     fn post_exec_span_batch_txs() -> SpanBatchTransactions {
@@ -675,44 +750,44 @@ mod tests {
     }
 
     #[test]
-    fn test_check_post_exec_slots_accepts_honest_encoding() {
-        assert_eq!(post_exec_span_batch_txs().check_post_exec_slots(), Ok(()));
+    fn test_check_system_tx_slots_accepts_honest_encoding() {
+        assert_eq!(post_exec_span_batch_txs().check_system_tx_slots(), Ok(()));
     }
 
     #[test]
-    fn test_check_post_exec_slots_rejects_tampered_slots() {
+    fn test_check_system_tx_slots_rejects_tampered_slots() {
         let err = || SpanBatchError::Decoding(SpanDecodingError::InvalidPostExecSlots);
 
         // Clearing the zero-`to` bit would make the transaction consume a `tx_tos`
         // entry it has no field for.
         let mut txs = post_exec_span_batch_txs();
         txs.zero_to_bits.set_bit(0, false);
-        assert_eq!(txs.check_post_exec_slots(), Err(err()));
+        assert_eq!(txs.check_system_tx_slots(), Err(err()));
 
         // A post-exec transaction is unsigned: r, s and the y parity bit are all zero.
         let mut txs = post_exec_span_batch_txs();
         txs.tx_sigs[0] = Signature::new(U256::from(1), U256::ZERO, false);
-        assert_eq!(txs.check_post_exec_slots(), Err(err()));
+        assert_eq!(txs.check_system_tx_slots(), Err(err()));
 
         let mut txs = post_exec_span_batch_txs();
         txs.tx_sigs[0] = Signature::new(U256::ZERO, U256::from(1), false);
-        assert_eq!(txs.check_post_exec_slots(), Err(err()));
+        assert_eq!(txs.check_system_tx_slots(), Err(err()));
 
         let mut txs = post_exec_span_batch_txs();
         txs.tx_sigs[0] = Signature::new(U256::ZERO, U256::ZERO, true);
-        assert_eq!(txs.check_post_exec_slots(), Err(err()));
+        assert_eq!(txs.check_system_tx_slots(), Err(err()));
 
         let mut txs = post_exec_span_batch_txs();
         txs.tx_nonces[0] = 1;
-        assert_eq!(txs.check_post_exec_slots(), Err(err()));
+        assert_eq!(txs.check_system_tx_slots(), Err(err()));
 
         let mut txs = post_exec_span_batch_txs();
         txs.tx_gases[0] = 1;
-        assert_eq!(txs.check_post_exec_slots(), Err(err()));
+        assert_eq!(txs.check_system_tx_slots(), Err(err()));
     }
 
     #[test]
-    fn test_check_post_exec_slots_ignores_other_tx_types() {
+    fn test_check_system_tx_slots_ignores_other_tx_types() {
         // An ordinary transaction carries a real signature, nonce and gas, and the rule must
         // not reach it.
         let sig = Signature::test_signature();
@@ -723,7 +798,7 @@ mod tests {
 
         let mut txs = SpanBatchTransactions::default();
         txs.add_txs(vec![Bytes::from(buf)], 1).unwrap();
-        assert_eq!(txs.check_post_exec_slots(), Ok(()));
+        assert_eq!(txs.check_system_tx_slots(), Ok(()));
     }
 
     #[test]
@@ -835,10 +910,11 @@ mod tests {
 
     #[test]
     fn test_read_tx_data_rejects_unknown_type_byte() {
-        // A type byte <= 0x7F that maps to no `OpTxType` (e.g. 0x03, 0x7F) cannot be represented,
-        // so — unlike Legacy/Deposit, which defer to the typed decoder — it is rejected at
-        // the reader.
-        for first in [0x03u8, 0x7F] {
+        // A type byte <= 0x7F that maps to no `OpTxType` (e.g. 0x03, 0x7F, or 0x06, the removed
+        // frame transaction) cannot be represented, so — unlike Legacy/Deposit, which defer to the
+        // typed decoder — it is rejected at the reader (op-node:
+        // `TestSpanBatchTxsRecoverVRejectsUnknownTypes`).
+        for first in [0x03u8, 0x06, 0x7F] {
             let mut data: &[u8] = &[first, 0xc1, 0x05];
             let err = read_tx_data(&mut data).unwrap_err();
             assert_eq!(err, SpanBatchError::Decoding(SpanDecodingError::InvalidTransactionType));

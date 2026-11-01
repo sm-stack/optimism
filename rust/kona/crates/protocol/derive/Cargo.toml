@@ -45,6 +45,7 @@ tracing-subscriber = { workspace = true, optional = true, features = ["fmt"] }
 metrics = { workspace = true, optional = true }
 
 [dev-dependencies]
+miniz_oxide.workspace = true
 spin.workspace = true
 proptest.workspace = true
 serde_json.workspace = true

@@ -3,8 +3,8 @@
 mod pipeline;
 pub use pipeline::{
     TestAttributesQueue, TestBatchProvider, TestBatchStream, TestChannelProvider,
-    TestChannelReader, TestFrameQueue, TestL1Retrieval, TestNextAttributes, TestPipeline,
-    TestPollingTraversal, new_test_pipeline,
+    TestChannelReader, TestDependencyGate, TestFrameQueue, TestL1Retrieval, TestNextAttributes,
+    TestPipeline, TestPollingTraversal, new_test_pipeline,
 };
 
 mod traversal;

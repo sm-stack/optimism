@@ -141,6 +141,14 @@ impl BatchReader {
             return None;
         }
 
+        // Before proof aggregation a proof aggregate is an unknown batch type, which ends the
+        // channel.
+        if matches!(batch, Batch::ProofAggregate(_)) &&
+            !cfg.is_proof_aggregation_active(self.origin_timestamp)
+        {
+            return None;
+        }
+
         // Advance the cursor on the reader.
         self.cursor = self.decompressed.len() - decompressed_reader.len();
         Some(batch)

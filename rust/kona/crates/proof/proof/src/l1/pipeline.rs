@@ -15,6 +15,7 @@ use kona_genesis::{L1ChainConfig, RollupConfig, SystemConfig};
 use kona_interop::DependencySet;
 use kona_preimage::CommsClient;
 use kona_protocol::{BlockInfo, L2BlockInfo, OpAttributesWithParent};
+use op_alloy_consensus::SharedProofAggregateVerifier;
 use spin::RwLock;
 
 /// An oracle-backed derivation pipeline.
@@ -65,6 +66,7 @@ where
         chain_provider: L1,
         l2_chain_provider: L2,
         dependency_set: Option<Arc<DependencySet>>,
+        proof_aggregate_verifier: Option<SharedProofAggregateVerifier>,
     ) -> PipelineResult<Self> {
         let attributes = StatefulAttributesBuilder::new(
             cfg.clone(),
@@ -80,6 +82,7 @@ where
             .l2_chain_provider(l2_chain_provider.clone())
             .chain_provider(chain_provider)
             .builder(attributes)
+            .proof_aggregate_verifier(proof_aggregate_verifier)
             .origin(sync_start.read().origin())
             .build_polled();
 

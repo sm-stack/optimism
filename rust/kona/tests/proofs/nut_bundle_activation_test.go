@@ -88,12 +88,17 @@ func testActivationBlockNUTBundle(gt *testing.T, testCfg *helpers.TestCfg[forks.
 
 	expectedTxs, expectedGas, err := derive.UpgradeTransactions(fork)
 	require.NoError(t, err, "load NUT bundle for %s", fork)
+	if fork == forks.Lagoon {
+		// A single-chain activation also runs the Keystore deployments after the bundle.
+		expectedTxs, _, err = derive.LagoonActivationUpgradeTransactions(false)
+		require.NoError(t, err)
+	}
 	require.NotEmpty(t, expectedTxs, "bundle for %s must contain at least one upgrade tx", fork)
 
 	engine := env.Engine
 	actBlock := engine.L2Chain().GetBlockByHash(actHeader.Hash())
 	txs := actBlock.Transactions()
-	// Index 0 is the L1 info deposit; indices 1.. are the NUT upgrade deposits.
+	// Index 0 is the L1 info deposit; indices 1.. are the upgrade deposits.
 	require.Len(t, txs, 1+len(expectedTxs),
 		"activation block should have 1 L1 info deposit + %d NUT upgrade txs", len(expectedTxs))
 

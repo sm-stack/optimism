@@ -65,7 +65,7 @@ Once the execution trace bisection begins and Cannon is run, an Executable and L
 Within Cannon is the `mipsevm` that is built to handle the big-endian 64-bit MIPS instruction set (MIPS64 Release 1), as required by the
 `mips64` compiler target. The ELF file contains MIPS instructions, where the code that has been compiled into MIPS instructions is kona-client.
 
-kona-client is Rust code that is compiled to the `mips64-unknown-none` target and run within the Cannon FPVM. kona-client, whether run natively
+kona-client is Rust code that is compiled to the `mips64-unknown-zkvm` target and run within the Cannon FPVM. kona-client, whether run natively
 or in Cannon, derives the state of the L2 from the data its companion [kona-host](/releases/kona-host) fetches for it. It is built such that the
 same inputs will produce not only the same outputs, but the same execution trace. This allows all participants in a fault dispute game to run
 kona-client such that, given the same L2 output root state transition, they can generate the same execution traces. This in turn generates the same

@@ -150,6 +150,8 @@ where
             // the span batch in this stage if it passes the validity checks.
             match batch_with_inclusion.batch {
                 Batch::Single(b) => return Ok(Batch::Single(b)),
+                // The channel reader keeps proof aggregates from the batch stages.
+                Batch::ProofAggregate(_) => return Err(PipelineError::InvalidBatchType.crit()),
                 Batch::Span(b) => {
                     #[cfg(feature = "metrics")]
                     let start = std::time::Instant::now();

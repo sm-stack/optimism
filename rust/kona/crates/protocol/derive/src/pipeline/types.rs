@@ -1,8 +1,8 @@
 //! Type aliases for the stages in the derivation pipeline.
 
 use crate::{
-    AttributesQueue, BatchProvider, BatchStream, ChannelProvider, ChannelReader, FrameQueue,
-    L1Retrieval, PollingTraversal,
+    AttributesQueue, BatchProvider, BatchStream, ChannelProvider, ChannelReader, DependencyGate,
+    FrameQueue, L1Retrieval, PollingTraversal,
 };
 
 /// Type alias for the [`L1Retrieval`] stage.
@@ -23,8 +23,12 @@ pub type BatchStreamStage<DAP, T, F> = BatchStream<ChannelReaderStage<DAP, T>, F
 /// Type alias for the [`BatchProvider`] stage.
 pub type BatchProviderStage<DAP, T, F> = BatchProvider<BatchStreamStage<DAP, T, F>, F>;
 
+/// Type alias for the [`DependencyGate`] stage, which scans a second channel reader stack.
+pub type DependencyGateStage<DAP, T, F> =
+    DependencyGate<BatchProviderStage<DAP, T, F>, ChannelReaderStage<DAP, T>, F>;
+
 /// Type alias for the [`AttributesQueue`] stage.
-pub type AttributesQueueStage<DAP, T, F, B> = AttributesQueue<BatchProviderStage<DAP, T, F>, B>;
+pub type AttributesQueueStage<DAP, T, F, B> = AttributesQueue<DependencyGateStage<DAP, T, F>, B>;
 
 /// Type alias for the [`AttributesQueue`] stage that uses a [`PollingTraversal`] stage.
 pub type PolledAttributesQueueStage<DAP, P, F, B> =

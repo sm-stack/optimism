@@ -114,6 +114,11 @@ where
         // ever schedules interop, the StatefulAttributesBuilder constructor
         // will panic.
         None,
+        Some(alloc::sync::Arc::new(
+            // Loaded on the first proof aggregate: in Cannon loading costs about 0.3B steps,
+            // which a block without one should not pay.
+            op_leanvm_tree::LeanVmTreeVerifier,
+        )),
     )
     .await?;
 

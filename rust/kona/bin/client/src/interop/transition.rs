@@ -138,6 +138,11 @@ where
         // This is used to gate the CrossL2Inbox upgrade-tx pair
         // (emitted only when `dependencies.len() > 1`).
         Some(Arc::new(boot.dependency_set.clone())),
+        Some(Arc::new(
+            // Loaded on the first proof aggregate: in Cannon loading costs about 0.3B steps,
+            // which a block without one should not pay.
+            op_leanvm_tree::LeanVmTreeVerifier,
+        )),
     )
     .await
     .map_err(Box::new)?;

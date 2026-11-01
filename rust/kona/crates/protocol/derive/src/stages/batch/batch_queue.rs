@@ -381,6 +381,8 @@ where
         // For singular batches, the span batch cache should be empty.
         match batch {
             Batch::Single(sb) => Ok(sb),
+            // The channel reader keeps proof aggregates from the batch stages.
+            Batch::ProofAggregate(_) => Err(PipelineError::InvalidBatchType.crit()),
             Batch::Span(sb) => {
                 let batches = match sb.get_singular_batches(&self.l1_blocks, parent).map_err(|e| {
                     PipelineError::BadEncoding(PipelineEncodingError::SpanBatchError(e)).crit()

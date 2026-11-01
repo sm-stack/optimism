@@ -4,12 +4,15 @@
 //! multi-chain dependency set additionally wrap the bundle with:
 //!  1. A pre-bundle `L1Block.setFeature(INTEROP)` call.
 //!  2. A post-bundle `ETHLiquidity` funding deposit with mint and value set to `u128::MAX`.
+//!
+//! Every chain also deploys the EIP-8130 Keystore and the STATEMENT authenticator right after the
+//! bundle, through the deterministic deployment proxy (salt 0).
 
 use alloc::{string::String, vec::Vec};
 use alloy_eips::eip2718::Encodable2718;
 use alloy_primitives::{Address, Bytes, TxKind, U256, address, keccak256};
 use kona_genesis::Predeploys;
-use op_alloy_consensus::{TxDeposit, UpgradeDepositSource};
+use op_alloy_consensus::{TxDeposit, UpgradeDepositSource, keystore};
 
 use crate::Hardfork;
 
@@ -25,6 +28,11 @@ const SET_FEATURE_GAS: u64 = 100_000;
 const ETH_LIQUIDITY_FUND_GAS: u64 = 50_000;
 /// Bootstrap mint and value for the post-bundle `ETHLiquidity` funding deposit.
 const ETH_LIQUIDITY_FUND_AMOUNT: u128 = u128::MAX;
+
+/// Gas limit for the Keystore deployment.
+const KEYSTORE_DEPLOY_GAS: u64 = 3_000_000;
+/// Gas limit for the STATEMENT authenticator deployment.
+const STATEMENT_AUTHENTICATOR_DEPLOY_GAS: u64 = 300_000;
 
 /// `bytes32` representation of the INTEROP feature constant (right-padded ASCII).
 const INTEROP_FEATURE: [u8; 32] = *b"INTEROP\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0";
@@ -73,6 +81,36 @@ impl Lagoon {
         }
     }
 
+    /// Returns a deposit having the deterministic deployment proxy deploy `initcode`.
+    fn deployment_tx(intent: &str, gas_limit: u64, initcode: &[u8]) -> TxDeposit {
+        TxDeposit {
+            source_hash: UpgradeDepositSource { intent: String::from(intent) }.source_hash(),
+            from: DEPOSITOR_ACCOUNT,
+            to: TxKind::Call(keystore::DETERMINISTIC_DEPLOYMENT_PROXY),
+            mint: 0,
+            value: U256::ZERO,
+            gas_limit,
+            is_system_transaction: false,
+            input: keystore::deployment_data(initcode),
+        }
+    }
+
+    /// Returns the deposits deploying the Keystore and the STATEMENT authenticator.
+    fn keystore_deposits() -> [TxDeposit; 2] {
+        [
+            Self::deployment_tx(
+                "Lagoon: deploy EIP-8130 Keystore",
+                KEYSTORE_DEPLOY_GAS,
+                &keystore::keystore_initcode(),
+            ),
+            Self::deployment_tx(
+                "Lagoon: deploy STATEMENT authenticator",
+                STATEMENT_AUTHENTICATOR_DEPLOY_GAS,
+                &keystore::statement_authenticator_initcode(),
+            ),
+        ]
+    }
+
     /// Returns the JSON bundle deposit transactions that execute on every
     /// Interop activation block, even for single-chain dependency sets.
     fn bundle_deposits() -> Vec<TxDeposit> {
@@ -86,15 +124,21 @@ impl Lagoon {
         Self::set_feature_tx().gas_limit + Self::eth_liquidity_funding_tx().gas_limit
     }
 
+    /// Returns the gas the Keystore deployments occupy in the activation block.
+    const fn keystore_gas() -> u64 {
+        KEYSTORE_DEPLOY_GAS + STATEMENT_AUTHENTICATOR_DEPLOY_GAS
+    }
+
     /// Returns all deposit transactions for the Interop activation block.
     pub fn deposits(activate_interop_contracts: bool) -> Vec<TxDeposit> {
         let bundle_deposits = Self::bundle_deposits();
         let wrapper_count = if activate_interop_contracts { 2 } else { 0 };
-        let mut deposits = Vec::with_capacity(wrapper_count + bundle_deposits.len());
+        let mut deposits = Vec::with_capacity(wrapper_count + bundle_deposits.len() + 2);
         if activate_interop_contracts {
             deposits.push(Self::set_feature_tx());
         }
         deposits.extend(bundle_deposits);
+        deposits.extend(Self::keystore_deposits());
         if activate_interop_contracts {
             deposits.push(Self::eth_liquidity_funding_tx());
         }
@@ -121,23 +165,25 @@ impl Hardfork for Lagoon {
 
     /// Returns the gas added to the Lagoon activation block's gas limit.
     ///
-    /// This always covers the `setFeature` and `ETHLiquidity` funding wrappers, even for a
-    /// single-chain activation that does not emit them, so that the amount cannot vary with the
-    /// dependency set — which the system config reconstructed from the block never sees.
+    /// This covers the bundle and the Keystore deployments, and always the `setFeature` and
+    /// `ETHLiquidity` funding wrappers, even for a single-chain activation that does not emit
+    /// them, so that the amount cannot vary with the dependency set — which the system config
+    /// reconstructed from the block never sees.
     fn upgrade_gas(&self) -> u64 {
-        interop_nut_bundle().total_gas() + Self::wrapper_gas()
+        interop_nut_bundle().total_gas() + Self::wrapper_gas() + Self::keystore_gas()
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloy_primitives::{B256, b256};
 
     #[test]
     fn deposits_have_correct_count() {
-        // 1 setFeature + 28 bundle txs + 1 ETHLiquidity funding = 30
-        assert_eq!(Lagoon::deposits(true).len(), 30);
-        assert_eq!(Lagoon::deposits(false).len(), 28);
+        // 1 setFeature + 28 bundle txs + 2 Keystore deployments + 1 ETHLiquidity funding = 32
+        assert_eq!(Lagoon::deposits(true).len(), 32);
+        assert_eq!(Lagoon::deposits(false).len(), 30);
     }
 
     #[test]
@@ -166,7 +212,10 @@ mod tests {
         // The wrappers are reserved unconditionally, so a single-chain activation emits only the
         // bundle's deposits but still reserves gas for the wrappers it skips.
         let bundle_gas = interop_nut_bundle().total_gas();
-        assert_eq!(Lagoon {}.upgrade_gas(), bundle_gas + SET_FEATURE_GAS + ETH_LIQUIDITY_FUND_GAS);
+        assert_eq!(
+            Lagoon {}.upgrade_gas(),
+            bundle_gas + SET_FEATURE_GAS + ETH_LIQUIDITY_FUND_GAS + Lagoon::keystore_gas()
+        );
     }
 
     #[test]
@@ -183,4 +232,38 @@ mod tests {
         let expected = UpgradeDepositSource { intent: String::from(expected_intent) }.source_hash();
         assert_eq!(deps[1].source_hash, expected);
     }
+
+    /// The Keystore deployments follow the bundle and call the deterministic deployment proxy with
+    /// salt 0 and the committed initcode (op-node: `TestLagoonKeystoreDeployments`).
+    #[test]
+    fn keystore_deployments_follow_the_bundle() {
+        let deps = Lagoon::deposits(false);
+        let [keystore_tx, authenticator_tx] = deps.last_chunk::<2>().unwrap();
+        for tx in [keystore_tx, authenticator_tx] {
+            assert_eq!(tx.to, TxKind::Call(keystore::DETERMINISTIC_DEPLOYMENT_PROXY));
+            assert_eq!(tx.from, DEPOSITOR_ACCOUNT);
+            assert_eq!(&tx.input[..32], &[0u8; 32]);
+        }
+        assert_eq!(&keystore_tx.input[32..], keystore::keystore_initcode().as_slice());
+        assert_eq!(
+            &authenticator_tx.input[32..],
+            keystore::statement_authenticator_initcode().as_slice()
+        );
+        // The same hashes as op-node's `TestLagoonKeystoreDeployments`.
+        let hash = |tx: &TxDeposit| keccak256(tx.encoded_2718());
+        for (tx, expected) in
+            [(keystore_tx, KEYSTORE_DEPOSIT_HASH), (authenticator_tx, AUTHENTICATOR_DEPOSIT_HASH)]
+        {
+            assert_eq!(hash(tx), expected);
+        }
+
+        // A multi-chain activation wraps the same deposits.
+        let wrapped = Lagoon::deposits(true);
+        assert_eq!(wrapped[1..wrapped.len() - 1], deps[..]);
+    }
+
+    const KEYSTORE_DEPOSIT_HASH: B256 =
+        b256!("0x562344a5a0eec51d8df4b158d6e4c8cb33e32e3ff279a400bbbe3e15a2c14a4a");
+    const AUTHENTICATOR_DEPOSIT_HASH: B256 =
+        b256!("0xe5aa8aa037a5bc9285cdeb6de163fa0f47e42765e44a447df351c93eda751aca");
 }

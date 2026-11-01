@@ -608,6 +608,10 @@ impl HintHandler for InteropHintHandler {
                             l1_provider,
                             l2_provider.clone(),
                             dependency_set,
+                            Some(Arc::new(
+                                op_leanvm_tree::LeanVmTreeVerifier::load()
+                                    .map_err(|e| anyhow!("the leanVM tree class: {e}"))?,
+                            )),
                         )
                         .await?;
                         let executor = KonaExecutor::new(

@@ -14,8 +14,8 @@ use alloy_evm::{FromRecoveredTx, FromTxWithEncoded, IntoTxEnv};
 use alloy_op_evm::block::OpTxEnv;
 use alloy_primitives::{Address, B256, Bytes, TxKind, U256};
 use core::ops::{Deref, DerefMut};
-use op_alloy_consensus::{OpTxEnvelope, TxDeposit, TxPostExec};
-use op_revm::{OpTransaction, transaction::deposit::DepositTransactionParts};
+use op_alloy_consensus::{OpTxEnvelope, TxDeposit, TxEip8430, TxPostExec};
+use op_revm::{OpTransaction, aa::AaTxEnv, transaction::deposit::DepositTransactionParts};
 use revm::context::TxEnv;
 
 /// Helper to convert a deposit transaction into a [`TxEnv`].
@@ -146,6 +146,7 @@ impl FromTxWithEncoded<OpTxEnvelope> for FpvmOpTx {
             OpTxEnvelope::Eip7702(tx) => Self::from_encoded_tx(tx, caller, encoded),
             OpTxEnvelope::Deposit(tx) => Self::from_encoded_tx(tx.inner(), caller, encoded),
             OpTxEnvelope::PostExec(tx) => Self::from_encoded_tx(tx.inner(), caller, encoded),
+            OpTxEnvelope::Aa(tx) => Self::from_encoded_tx(tx.inner(), caller, encoded),
         }
     }
 }
@@ -175,6 +176,7 @@ macro_rules! impl_from_tx {
                         base,
                         enveloped_tx: Some(encoded),
                         deposit: Default::default(),
+                        aa: None,
                     })
                 }
             }
@@ -203,7 +205,12 @@ impl<T> FromTxWithEncoded<Signed<TxEip4844Variant<T>>> for FpvmOpTx {
 impl<T> FromTxWithEncoded<TxEip4844Variant<T>> for FpvmOpTx {
     fn from_encoded_tx(tx: &TxEip4844Variant<T>, caller: Address, encoded: Bytes) -> Self {
         let base = TxEnv::from_recovered_tx(tx, caller);
-        Self(OpTransaction { base, enveloped_tx: Some(encoded), deposit: Default::default() })
+        Self(OpTransaction {
+            base,
+            enveloped_tx: Some(encoded),
+            deposit: Default::default(),
+            aa: None,
+        })
     }
 }
 
@@ -222,7 +229,7 @@ impl FromTxWithEncoded<TxDeposit> for FpvmOpTx {
             mint: Some(tx.mint),
             is_system_transaction: tx.is_system_transaction,
         };
-        Self(OpTransaction { base, enveloped_tx: Some(encoded), deposit })
+        Self(OpTransaction { base, enveloped_tx: Some(encoded), deposit, aa: None })
     }
 }
 
@@ -236,7 +243,30 @@ impl FromRecoveredTx<TxPostExec> for FpvmOpTx {
 impl FromTxWithEncoded<TxPostExec> for FpvmOpTx {
     fn from_encoded_tx(tx: &TxPostExec, caller: Address, encoded: Bytes) -> Self {
         let base = alloy_op_evm::tx::post_exec_tx_env(tx, caller);
-        Self(OpTransaction { base, enveloped_tx: Some(encoded), deposit: Default::default() })
+        Self(OpTransaction {
+            base,
+            enveloped_tx: Some(encoded),
+            deposit: Default::default(),
+            aa: None,
+        })
+    }
+}
+
+impl FromRecoveredTx<TxEip8430> for FpvmOpTx {
+    fn from_recovered_tx(tx: &TxEip8430, sender: Address) -> Self {
+        let encoded = tx.encoded_2718();
+        Self::from_encoded_tx(tx, sender, encoded.into())
+    }
+}
+
+impl FromTxWithEncoded<TxEip8430> for FpvmOpTx {
+    fn from_encoded_tx(tx: &TxEip8430, caller: Address, encoded: Bytes) -> Self {
+        Self(OpTransaction {
+            base: alloy_op_evm::tx::aa_tx_env(tx, caller),
+            enveloped_tx: Some(encoded),
+            deposit: Default::default(),
+            aa: Some(alloc::sync::Arc::new(AaTxEnv::new(tx.clone()))),
+        })
     }
 }
 
