@@ -29,6 +29,10 @@ var maxBlobsPerBlock = params.DefaultPragueBlobConfig.Max
 // includes the derivation version byte and frame overhead.
 const maxL1CalldataSize = (params.MaxTxGas - amsterdamTxBaseGas) / amsterdamCalldataFloorGasPerByte
 
+// maxProofAggregateHold bounds how long a channel is held for its proof aggregate: the channels
+// after it wait as long.
+const maxProofAggregateHold = time.Minute
+
 type ThrottleConfig struct {
 	AdditionalEndpoints []string
 
@@ -75,6 +79,15 @@ type CLIConfig struct {
 
 	// L2EthRpc is the HTTP provider URL for the L2 execution engine. A comma-separated list enables the active L2 provider. Such a list needs to match the number of RollupRpcs provided.
 	L2EthRpc []string
+
+	// ProofAggregateRpc is the HTTP provider URL of the sequencer's execution client serving
+	// admin_pendingProofAggregates. Empty disables posting proof aggregates. It is static: it is
+	// not followed across op-conductor leader changes like the active L2 endpoint.
+	ProofAggregateRpc string
+
+	// ProofAggregateHold is how long a channel ending a proof aggregation run is held back for its
+	// blocks' proof aggregate. 0 holds none.
+	ProofAggregateHold time.Duration
 
 	// RollupRpc is the HTTP provider URL for the L2 rollup node. A comma-separated list enables the active L2 provider. Such a list needs to match the number of L2EthRpcs provided.
 	RollupRpc []string
@@ -194,6 +207,12 @@ func (c *CLIConfig) Check() error {
 	if c.BatchType > derive.SpanBatchType {
 		return fmt.Errorf("unknown batch type: %v", c.BatchType)
 	}
+	if c.ProofAggregateHold > 0 && (c.ProofAggregateRpc == "" || c.BatchType != derive.SpanBatchType) {
+		return errors.New("holding channels for proof aggregates requires a proof aggregate RPC and span batches")
+	}
+	if c.ProofAggregateHold > maxProofAggregateHold {
+		return fmt.Errorf("ProofAggregateHold %v exceeds %v", c.ProofAggregateHold, maxProofAggregateHold)
+	}
 	if c.CheckRecentTxsDepth > 128 {
 		return fmt.Errorf("CheckRecentTxsDepth cannot be set higher than 128: %v", c.CheckRecentTxsDepth)
 	}
@@ -230,11 +249,13 @@ func (c *CLIConfig) Check() error {
 func NewConfig(ctx *cli.Context) *CLIConfig {
 	return &CLIConfig{
 		/* Required Flags */
-		L1EthRpc:        ctx.String(flags.L1EthRpcFlag.Name),
-		L2EthRpc:        ctx.StringSlice(flags.L2EthRpcFlag.Name),
-		RollupRpc:       ctx.StringSlice(flags.RollupRpcFlag.Name),
-		SubSafetyMargin: ctx.Uint64(flags.SubSafetyMarginFlag.Name),
-		PollInterval:    ctx.Duration(flags.PollIntervalFlag.Name),
+		L1EthRpc:           ctx.String(flags.L1EthRpcFlag.Name),
+		L2EthRpc:           ctx.StringSlice(flags.L2EthRpcFlag.Name),
+		RollupRpc:          ctx.StringSlice(flags.RollupRpcFlag.Name),
+		ProofAggregateRpc:  ctx.String(flags.ProofAggregateRpcFlag.Name),
+		ProofAggregateHold: ctx.Duration(flags.ProofAggregateHoldFlag.Name),
+		SubSafetyMargin:    ctx.Uint64(flags.SubSafetyMarginFlag.Name),
+		PollInterval:       ctx.Duration(flags.PollIntervalFlag.Name),
 
 		/* Optional Flags */
 		MaxPendingTransactions:       ctx.Uint64(flags.MaxPendingTransactionsFlag.Name),

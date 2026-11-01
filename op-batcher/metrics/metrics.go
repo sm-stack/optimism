@@ -63,6 +63,18 @@ type Metricer interface {
 
 	RecordBlobUsedBytes(num int)
 
+	// Proof aggregate channel holds: a channel ending a run held back for its blocks' aggregate.
+	RecordProofAggregateHold()
+	RecordProofAggregateHoldReleased(reason string, held time.Duration)
+	// RecordProofAggregateWritten records where an aggregate was written: "ends_channel",
+	// "keeps_open" (a channel that goes at the next run boundary) or "held".
+	RecordProofAggregateWritten(placement string)
+	// RecordProofAggregateChannelBeforeBoundary records a channel with dependent blocks closed
+	// before the end of its run.
+	RecordProofAggregateChannelBeforeBoundary()
+	// RecordProofAggregateRunBlocksChanged records the sequencer's run length changing.
+	RecordProofAggregateRunBlocksChanged()
+
 	Document() []opmetrics.DocumentedMetric
 
 	PendingDABytes() float64
@@ -106,6 +118,13 @@ type Metrics struct {
 	batcherTxEvs opmetrics.EventVec
 
 	blobUsedBytes prometheus.Histogram
+
+	proofAggregateHolds        prometheus.Counter
+	proofAggregateHoldReleases *prometheus.CounterVec
+	proofAggregateHoldSeconds  prometheus.Histogram
+	proofAggregatesWritten     *prometheus.CounterVec
+	proofAggregateEarlyCloses  prometheus.Counter
+	proofAggregateRunChanges   prometheus.Counter
 
 	throttleIntensity      prometheus.GaugeVec
 	throttleMaxTxSize      prometheus.Gauge
@@ -232,6 +251,38 @@ func NewMetrics(procName string) *Metrics {
 		}),
 
 		batcherTxEvs: opmetrics.NewEventVec(factory, ns, "", "batcher_tx", "BatcherTx", []string{"stage"}),
+
+		proofAggregateHolds: factory.NewCounter(prometheus.CounterOpts{
+			Namespace: ns,
+			Name:      "proof_aggregate_holds_total",
+			Help:      "Channels ending a proof aggregation run held back for the proof aggregate of their blocks.",
+		}),
+		proofAggregateHoldReleases: factory.NewCounterVec(prometheus.CounterOpts{
+			Namespace: ns,
+			Name:      "proof_aggregate_hold_releases_total",
+			Help:      "Held channels released, by reason.",
+		}, []string{"reason"}),
+		proofAggregateHoldSeconds: factory.NewHistogram(prometheus.HistogramOpts{
+			Namespace: ns,
+			Name:      "proof_aggregate_hold_seconds",
+			Help:      "How long channels were held for their proof aggregate.",
+			Buckets:   []float64{0.5, 1, 2, 4, 6, 10, 20, 30, 60},
+		}),
+		proofAggregatesWritten: factory.NewCounterVec(prometheus.CounterOpts{
+			Namespace: ns,
+			Name:      "proof_aggregates_written_total",
+			Help:      "Proof aggregates written to channels: ending the channel (ends_channel), keeping it open to the next run boundary (keeps_open), or last in a held channel (held).",
+		}, []string{"placement"}),
+		proofAggregateEarlyCloses: factory.NewCounter(prometheus.CounterOpts{
+			Namespace: ns,
+			Name:      "proof_aggregate_channels_before_boundary_total",
+			Help:      "Channels with dependent blocks closed before the end of their proof aggregation run.",
+		}),
+		proofAggregateRunChanges: factory.NewCounter(prometheus.CounterOpts{
+			Namespace: ns,
+			Name:      "proof_aggregate_run_blocks_changes_total",
+			Help:      "Changes of the sequencer's proof aggregation run length while running.",
+		}),
 
 		throttleIntensity: *factory.NewGaugeVec(prometheus.GaugeOpts{
 			Namespace: ns,
@@ -438,6 +489,27 @@ func (m *Metrics) RecordBatchTxFailed() {
 
 func (m *Metrics) RecordBlobUsedBytes(num int) {
 	m.blobUsedBytes.Observe(float64(num))
+}
+
+func (m *Metrics) RecordProofAggregateHold() {
+	m.proofAggregateHolds.Inc()
+}
+
+func (m *Metrics) RecordProofAggregateHoldReleased(reason string, held time.Duration) {
+	m.proofAggregateHoldReleases.WithLabelValues(reason).Inc()
+	m.proofAggregateHoldSeconds.Observe(held.Seconds())
+}
+
+func (m *Metrics) RecordProofAggregateWritten(placement string) {
+	m.proofAggregatesWritten.WithLabelValues(placement).Inc()
+}
+
+func (m *Metrics) RecordProofAggregateChannelBeforeBoundary() {
+	m.proofAggregateEarlyCloses.Inc()
+}
+
+func (m *Metrics) RecordProofAggregateRunBlocksChanged() {
+	m.proofAggregateRunChanges.Inc()
 }
 
 func (m *Metrics) RecordChannelQueueLength(len int) {

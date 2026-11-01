@@ -40,6 +40,22 @@ var (
 		Usage:   "HTTP provider URL for L2 execution engine. A comma-separated list enables the active L2 endpoint provider. Such a list needs to match the number of rollup-rpcs provided.",
 		EnvVars: prefixEnvVars("L2_ETH_RPC"),
 	}
+	ProofAggregateRpcFlag = &cli.StringFlag{
+		Name: "proof-aggregate-rpc",
+		Usage: "HTTP provider URL of the sequencer's execution client serving admin_pendingProofAggregates. " +
+			"When set, the batcher posts the proof aggregates it returns as proof aggregate batches. " +
+			"It must point at the sequencer's execution client, and is not followed across op-conductor leader changes.",
+		EnvVars: prefixEnvVars("PROOF_AGGREGATE_RPC"),
+	}
+	ProofAggregateHoldFlag = &cli.DurationFlag{
+		Name: "proof-aggregate-hold",
+		Usage: "How long to hold a channel ending a proof aggregation run back for the proof aggregate of its " +
+			"blocks, so that the aggregate shares the channel. Keep it below the run's duration. 0 holds none. " +
+			"Requires --proof-aggregate-rpc, span batches, brotli and a sequencer with " +
+			"--rollup.proof-aggregation-run-blocks set.",
+		Value:   0,
+		EnvVars: prefixEnvVars("PROOF_AGGREGATE_HOLD"),
+	}
 	RollupRpcFlag = &cli.StringSliceFlag{
 		Name:    "rollup-rpc",
 		Usage:   "HTTP provider URL for Rollup node. A comma-separated list enables the active L2 endpoint provider. Such a list needs to match the number of l2-eth-rpcs provided.",
@@ -170,6 +186,8 @@ var requiredFlags = []cli.Flag{
 }
 
 var optionalFlags = []cli.Flag{
+	ProofAggregateRpcFlag,
+	ProofAggregateHoldFlag,
 	WaitNodeSyncFlag,
 	CheckRecentTxsDepthFlag,
 	SubSafetyMarginFlag,

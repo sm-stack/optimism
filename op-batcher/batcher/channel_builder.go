@@ -6,7 +6,9 @@ import (
 	"fmt"
 	"io"
 	"math"
+	"time"
 
+	optypes "github.com/ethereum-optimism/optimism/op-core/types"
 	"github.com/ethereum-optimism/optimism/op-node/rollup"
 	"github.com/ethereum-optimism/optimism/op-node/rollup/derive"
 	"github.com/ethereum-optimism/optimism/op-service/eth"
@@ -21,6 +23,9 @@ var (
 	ErrChannelTimeoutClose   = errors.New("close to channel timeout")
 	ErrSeqWindowClose        = errors.New("close to sequencer window timeout")
 	ErrTerminated            = errors.New("channel terminated")
+	ErrProofAggregateWritten = errors.New("proof aggregate written")
+	ErrDependencyScanCapNear = errors.New("channel input near derivation's dependency scan byte cap")
+	ErrRunBoundary           = errors.New("channel reached the end of a proof aggregation run")
 )
 
 type ChannelFullError struct {
@@ -60,6 +65,22 @@ type ChannelBuilder struct {
 	timeout uint64
 	// reason for currently set timeout
 	timeoutReason error
+	// earliest timeout that is not the channel duration, and its reason: a channel deferring its
+	// duration to a run boundary still closes at it. 0 if none set yet.
+	safetyTimeout uint64
+	safetyReason  error
+
+	// runBlocks is how many L2 blocks a proof aggregation run spans. 0 if runs have no fixed end.
+	runBlocks uint64
+	// mustEnd is set once the channel holds a block depending on a proof statement or a proof
+	// aggregate, or follows a channel that did and closed within the same run: it then ends at the
+	// run's boundary. It is only acted on with runBlocks set.
+	mustEnd bool
+	// lastDependent is the last block depending on a proof statement in the channel or in the
+	// channel it follows within a run. 0 if none.
+	lastDependent uint64
+	// deferredUntil is when a channel past its duration stops waiting for the run's boundary.
+	deferredUntil time.Time
 
 	// Reason for the channel being full. Set by setFullErr so it's always
 	// guaranteed to be a ChannelFullError wrapping the specific reason.
@@ -202,12 +223,98 @@ func (c *ChannelBuilder) AddBlock(block SizedBlock) (*derive.L1BlockInfo, error)
 		c.oldestL2 = eth.ToBlockID(block)
 	}
 
+	if block.dependent {
+		c.mustEnd, c.lastDependent = true, block.NumberU64()
+	}
+
 	if err = c.co.FullErr(); err != nil {
 		c.setFullErr(err)
 		// Adding this block still worked, so don't return error, just mark as full
 	}
+	if c.mustEnd && !c.IsFull() && c.EndsOnRunBoundary() {
+		c.setFullErr(ErrRunBoundary)
+	}
 
 	return l1info, nil
+}
+
+// EndsOnRunBoundary returns whether the channel's last block ends a proof aggregation run.
+func (c *ChannelBuilder) EndsOnRunBoundary() bool {
+	if c.runBlocks == 0 || c.blocks.Len() == 0 {
+		return false
+	}
+	return (c.blocks[c.blocks.Len()-1].NumberU64()+1)%c.runBlocks == 0
+}
+
+// AddProofAggregate adds a proof aggregate answering for blocks up to through, written after the
+// blocks added so far. l2Time is the time of the latest block added to any channel.
+func (c *ChannelBuilder) AddProofAggregate(payload *optypes.ProofAggregatePayload, through eth.BlockID, l2Time uint64) error {
+	if c.IsFull() {
+		return c.FullErr()
+	}
+	return c.addProofAggregate(payload, through, l2Time, true)
+}
+
+// AddProofAggregateKeepingOpen adds a proof aggregate and keeps the channel open: it goes at the
+// next run boundary, carrying the aggregate of its own blocks as well if that comes in time.
+func (c *ChannelBuilder) AddProofAggregateKeepingOpen(payload *optypes.ProofAggregatePayload, through eth.BlockID, l2Time uint64) error {
+	if c.IsFull() {
+		return c.FullErr()
+	}
+	return c.addProofAggregate(payload, through, l2Time, false)
+}
+
+// Holdable returns whether the channel may be held for a proof aggregate: it is full by a run
+// boundary, its size or its duration, not by a safety margin, derivation's dependency scan cap,
+// the RLP or frame index bound, a forced close or an aggregate ending it, and none of its frames
+// are output yet.
+func (c *ChannelBuilder) Holdable() bool {
+	return c.numFrames == 0 &&
+		(errors.Is(c.fullErr, ErrRunBoundary) || errors.Is(c.fullErr, derive.ErrCompressorFull) ||
+			errors.Is(c.fullErr, ErrMaxDurationReached))
+}
+
+// NearSeqWindow returns whether l1Head is within the safety margin of the sequencing window of the
+// channel's oldest L1 origin: a channel there is submitted at once, never held.
+func (c *ChannelBuilder) NearSeqWindow(l1Head uint64) bool {
+	return l1Head >= c.oldestL1Origin.Number+c.cfg.SeqWindowSize-c.cfg.SubSafetyMargin
+}
+
+// AddHeldProofAggregate adds a proof aggregate to a channel held for it: one that is Holdable, or
+// that took an aggregate while held.
+func (c *ChannelBuilder) AddHeldProofAggregate(payload *optypes.ProofAggregatePayload, through eth.BlockID, l2Time uint64) error {
+	if !c.Holdable() && (c.numFrames > 0 || !errors.Is(c.fullErr, ErrProofAggregateWritten)) {
+		return c.FullErr()
+	}
+	return c.addProofAggregate(payload, through, l2Time, true)
+}
+
+func (c *ChannelBuilder) addProofAggregate(payload *optypes.ProofAggregatePayload, through eth.BlockID, l2Time uint64, ends bool) error {
+	err := c.co.AddProofAggregate(payload, l2Time)
+	if errors.Is(err, derive.ErrTooManyRLPBytes) || errors.Is(err, derive.ErrCompressorFull) {
+		c.setFullErr(err)
+		return c.FullErr()
+	} else if err != nil {
+		return fmt.Errorf("adding proof aggregate to channel out: %w", err)
+	}
+	// A channel holding only an aggregate is pruned once its blocks are safe, like their own.
+	if through.Number > c.latestL2.Number {
+		c.latestL2 = through
+	}
+	// Unless every block it answers for is in this channel, the aggregate ends the channel, full or
+	// not: derivation looks for it in a bounded range of L1 blocks after the batch of its through
+	// block, so the channel is submitted now rather than once it fills.
+	if ends {
+		c.setFullErr(ErrProofAggregateWritten)
+		return nil
+	}
+	c.mustEnd = true
+	// An aggregate that fills the compressor ends the channel: the channel out has flushed a
+	// finished stream, and writing to it again would restart compression mid-channel.
+	if err := c.co.FullErr(); err != nil {
+		c.setFullErr(err)
+	}
+	return nil
 }
 
 // FramePublished should be called whenever a frame of this channel got
@@ -245,6 +352,9 @@ func (c *ChannelBuilder) updateSwTimeout(l1InfoNumber uint64) {
 // If the timeout is updated, the provided reason will be set as the channel
 // full error reason in case the timeout is hit in the future.
 func (c *ChannelBuilder) updateTimeout(timeoutBlockNum uint64, reason error) {
+	if !errors.Is(reason, ErrMaxDurationReached) && (c.safetyTimeout == 0 || c.safetyTimeout > timeoutBlockNum) {
+		c.safetyTimeout, c.safetyReason = timeoutBlockNum, reason
+	}
 	if c.timeout == 0 || c.timeout > timeoutBlockNum {
 		c.log.Debug("setting timeout", "number", timeoutBlockNum, "timeout", c.timeout)
 		c.timeout = timeoutBlockNum
@@ -258,6 +368,21 @@ func (c *ChannelBuilder) CheckTimeout(l1BlockNum uint64) {
 	if c.timeout != 0 && !c.IsFull() && l1BlockNum >= c.timeout {
 		c.log.Debug("checking timeout", "l1blockNum", l1BlockNum, "timeout", c.timeout)
 		c.setFullErr(c.timeoutReason)
+	}
+}
+
+// DurationReachedInRun returns whether the channel is past its duration at the given block number
+// but ends at a run boundary still ahead.
+func (c *ChannelBuilder) DurationReachedInRun(l1BlockNum uint64) bool {
+	return c.runBlocks != 0 && c.mustEnd && !c.IsFull() && c.timeout != 0 && l1BlockNum >= c.timeout &&
+		errors.Is(c.timeoutReason, ErrMaxDurationReached)
+}
+
+// CheckSafetyTimeout is CheckTimeout for a channel deferring its duration: only a timeout that is
+// not the duration marks it as full.
+func (c *ChannelBuilder) CheckSafetyTimeout(l1BlockNum uint64) {
+	if c.safetyTimeout != 0 && !c.IsFull() && l1BlockNum >= c.safetyTimeout {
+		c.setFullErr(c.safetyReason)
 	}
 }
 
@@ -281,6 +406,9 @@ func (c *ChannelBuilder) IsFull() bool {
 //   - ErrChannelTimeoutClose if the consensus channel timeout got too close,
 //   - ErrSeqWindowClose if the end of the sequencer window got too close,
 //   - ErrTerminated if the channel was explicitly terminated.
+//   - ErrProofAggregateWritten if a proof aggregate was added,
+//   - ErrDependencyScanCapNear if the input neared derivation's dependency scan byte cap,
+//   - ErrRunBoundary if the channel reached the end of a proof aggregation run.
 func (c *ChannelBuilder) FullErr() error {
 	return c.fullErr
 }

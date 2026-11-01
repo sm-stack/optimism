@@ -192,3 +192,16 @@ func TestBatcherConfig(t *testing.T) {
 		})
 	}
 }
+
+func TestBatcherConfigProofAggregateHold(t *testing.T) {
+	cfg := validBatcherConfig()
+	cfg.ProofAggregateHold = 6 * time.Second
+	require.ErrorContains(t, cfg.Check(), "requires a proof aggregate RPC")
+	cfg.ProofAggregateRpc = "fake"
+	cfg.BatchType = derive.SingularBatchType
+	require.ErrorContains(t, cfg.Check(), "span batches")
+	cfg.BatchType = derive.SpanBatchType
+	require.NoError(t, cfg.Check())
+	cfg.ProofAggregateHold = 2 * time.Minute
+	require.ErrorContains(t, cfg.Check(), "exceeds")
+}

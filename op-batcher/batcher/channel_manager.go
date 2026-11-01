@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"io"
 	"math"
+	"slices"
+	"time"
 
 	"github.com/ethereum-optimism/optimism/op-batcher/metrics"
 	"github.com/ethereum-optimism/optimism/op-node/rollup"
@@ -55,6 +57,19 @@ type channelManager struct {
 	channelQueue []*channel
 	// used to lookup channels by tx ID upon tx success / failure
 	txChannels map[string]*channel
+
+	// proof aggregates whose blocks are not yet safe, in through order
+	aggregates []*pendingAggregate
+	// holdFor is how long a full channel is held back for its blocks' proof aggregate; 0 holds
+	// none.
+	holdFor time.Duration
+	// hold is the channel held back, if any
+	hold *channelHold
+	// now is the clock holds expire by
+	now func() time.Time
+	// runBlocks is how many L2 blocks a proof aggregation run spans, as the sequencer says, for
+	// the next channel; 0 if runs have no fixed end.
+	runBlocks uint64
 }
 
 func NewChannelManager(log log.Logger, metr metrics.Metricer, cfgProvider ChannelConfigProvider, rollupCfg *rollup.Config) *channelManager {
@@ -68,11 +83,23 @@ func NewChannelManager(log log.Logger, metr metrics.Metricer, cfgProvider Channe
 		rollupCfg:   rollupCfg,
 		outFactory:  NewChannelOut,
 		txChannels:  make(map[string]*channel),
+		now:         time.Now,
 	}
 }
 
 func (s *channelManager) SetChannelOutFactory(outFactory ChannelOutFactory) {
 	s.outFactory = outFactory
+}
+
+// SetProofAggregateHold holds a channel ending a run back for up to d for its blocks' proof
+// aggregate. It needs span batches and a proof aggregate source.
+func (s *channelManager) SetProofAggregateHold(d time.Duration) {
+	s.holdFor = d
+}
+
+// SetRunBlocks sets how many L2 blocks a proof aggregation run spans, from the next channel on.
+func (s *channelManager) SetRunBlocks(k uint64) {
+	s.runBlocks = k
 }
 
 // Clear clears the entire state of the channel manager.
@@ -90,6 +117,8 @@ func (s *channelManager) Clear(l1OriginLastSubmittedChannel eth.BlockID) {
 	s.metr.ClearAllStateMetrics()
 
 	s.txChannels = make(map[string]*channel)
+	s.aggregates = nil
+	s.hold = nil
 }
 
 func (s *channelManager) pendingBlocks() int {
@@ -149,22 +178,11 @@ func (s *channelManager) rewindToBlock(block eth.BlockID) {
 }
 
 // handleChannelInvalidated rewinds the channelManager's blockCursor
-// to point at the first block added to the provided channel,
-// and removes the channel from the channelQueue, along with
-// any channels which are newer than the provided channel.
+// to point at the first block added to the provided channel, or to
+// the first newer channel holding blocks, and removes the channel
+// from the channelQueue, along with any channels which are newer
+// than the provided channel.
 func (s *channelManager) handleChannelInvalidated(c *channel) {
-	if len(c.ChannelBuilder.blocks) > 0 {
-		// This is usually true, but there is an edge case
-		// where a channel timed out before any blocks got added.
-		// In that case we end up with an empty frame (header only),
-		// and there are no blocks to requeue.
-		blockID := eth.ToBlockID(c.ChannelBuilder.blocks[0])
-		s.rewindToBlock(blockID)
-	} else {
-		s.log.Debug("channelManager.handleChannelInvalidated: channel had no blocks")
-	}
-
-	// Trim provided channel and any newer channels:
 	invalidatedChannelIdx := 0
 
 	for i := range s.channelQueue {
@@ -173,6 +191,22 @@ func (s *channelManager) handleChannelInvalidated(c *channel) {
 			break
 		}
 	}
+
+	// The provided channel usually holds blocks, but it may have
+	// timed out before any blocks got added (in which case we end up
+	// with an empty frame, header only), or hold only a proof
+	// aggregate. Newer channels are dropped too, so their blocks
+	// are requeued.
+	if i := slices.IndexFunc(s.channelQueue[invalidatedChannelIdx:], func(ch *channel) bool {
+		return len(ch.ChannelBuilder.blocks) > 0
+	}); i >= 0 {
+		blockID := eth.ToBlockID(s.channelQueue[invalidatedChannelIdx+i].ChannelBuilder.blocks[0])
+		s.rewindToBlock(blockID)
+	} else {
+		s.log.Debug("channelManager.handleChannelInvalidated: channels had no blocks")
+	}
+
+	// Trim provided channel and any newer channels:
 
 	for i := invalidatedChannelIdx; i < len(s.channelQueue); i++ {
 		s.log.Warn("Dropped channel",
@@ -190,6 +224,10 @@ func (s *channelManager) handleChannelInvalidated(c *channel) {
 				delete(s.txChannels, txID)
 			}
 		}
+	}
+	s.unwriteAggregates(s.channelQueue[invalidatedChannelIdx:])
+	if s.hold != nil && slices.Contains(s.channelQueue[invalidatedChannelIdx:], s.hold.channel) {
+		s.hold = nil
 	}
 	s.channelQueue = s.channelQueue[:invalidatedChannelIdx]
 
@@ -288,6 +326,11 @@ type pubInfo struct {
 // If forcePublish is true, it will force close channels and
 // generate frames for them.
 func (s *channelManager) getReadyChannel(l1Head eth.BlockID, pi pubInfo) (*channel, error) {
+	held, err := s.updateHold(l1Head, pi)
+	if err != nil {
+		return nil, err
+	}
+
 	if pi.forcePublish && s.currentChannel != nil && s.currentChannel.TotalFrames() == 0 {
 		s.log.Info("Force-closing channel and creating frames", "channel_id", s.currentChannel.ID())
 		s.currentChannel.Close()
@@ -310,6 +353,10 @@ func (s *channelManager) getReadyChannel(l1Head eth.BlockID, pi pubInfo) (*chann
 	// Short circuit if there is pending tx data or the channel manager is closed
 	if dataPending {
 		return firstWithTxData, nil
+	}
+	// Channels after a held one are not submitted before it: build none meanwhile.
+	if held {
+		return nil, io.EOF
 	}
 
 	// If there are pending blocks, add them to a channel.
@@ -336,6 +383,12 @@ func (s *channelManager) getReadyChannel(l1Head eth.BlockID, pi pubInfo) (*chann
 		return nil, io.EOF
 	}
 
+	// Aggregates through the channel's last block need no later block to be written.
+	var chFullErr *ChannelFullError
+	if err := s.writeAggregates(s.blockCursor, false); err != nil && !errors.As(err, &chFullErr) {
+		return nil, err
+	}
+
 	if !pi.ignoreMaxChannelDuration {
 		// Register current L1 head (which checks for the max duration timeout)
 		// only after all blocks in the manager's state have been
@@ -343,6 +396,15 @@ func (s *channelManager) getReadyChannel(l1Head eth.BlockID, pi pubInfo) (*chann
 		// The aim is to prefer to optimally pack blocks into channels when
 		// instead of timing out the channel when more blocks soon to be processed.
 		s.registerL1Block(l1Head)
+	}
+
+	if s.currentChannel.runBlocks > 0 && !s.currentChannel.IsFull() &&
+		uint64(s.currentChannel.InputBytes()) >= maxAlignedChannelInputBytes {
+		s.currentChannel.setFullErr(ErrDependencyScanCapNear)
+	}
+
+	if s.startHold(l1Head, pi) {
+		return nil, io.EOF
 	}
 
 	if err := s.outputFrames(); err != nil {
@@ -375,6 +437,12 @@ func (s *channelManager) ensureChannelWithSpace(l1Head eth.BlockID) error {
 	}
 
 	pc := newChannel(s.log, s.metr, cfg, s.rollupCfg, s.l1OriginLastSubmittedChannel.Number, channelOut)
+	pc.runBlocks = s.runBlocks
+	// A channel that closed before its run's boundary leaves that boundary to this one, and the
+	// aggregate answering for its blocks with it.
+	if prev := s.currentChannel; prev != nil && prev.runBlocks > 0 && prev.mustEnd && !prev.EndsOnRunBoundary() {
+		pc.mustEnd, pc.lastDependent = true, prev.lastDependent
+	}
 
 	s.currentChannel = pc
 	s.log.Info("Created channel",
@@ -399,12 +467,28 @@ func (s *channelManager) ensureChannelWithSpace(l1Head eth.BlockID) error {
 
 // registerL1Block registers the given block at the current channel.
 func (s *channelManager) registerL1Block(l1Head eth.BlockID) {
-	s.currentChannel.CheckTimeout(l1Head.Number)
+	s.checkTimeout(s.currentChannel, l1Head.Number)
 	s.log.Debug("new L1-block registered at channel builder",
 		"l1Head", l1Head,
 		"channel_full", s.currentChannel.IsFull(),
 		"full_reason", s.currentChannel.FullErr(),
 	)
+}
+
+// checkTimeout marks c as full if it timed out at l1Head. A channel past its duration in a run it
+// must end with waits for the run's boundary, for at most a run's time, so that a stopped sequencer
+// does not pin it. Safety timeouts do not wait.
+func (s *channelManager) checkTimeout(c *channel, l1Head uint64) {
+	if c.DurationReachedInRun(l1Head) {
+		if c.deferredUntil.IsZero() {
+			c.deferredUntil = s.now().Add(time.Duration(c.runBlocks*s.rollupCfg.BlockTime) * time.Second)
+		}
+		if s.now().Before(c.deferredUntil) {
+			c.CheckSafetyTimeout(l1Head)
+			return
+		}
+	}
+	c.CheckTimeout(l1Head)
 }
 
 // processBlocks adds blocks from the blocks queue to the current channel until
@@ -439,6 +523,13 @@ func (s *channelManager) processBlocks() error {
 			break
 		}
 
+		// Aggregates answering for the blocks added so far go before the next block.
+		if err := s.writeAggregates(i, false); errors.As(err, &_chFullErr) {
+			break
+		} else if err != nil {
+			return err
+		}
+
 		l1info, err := s.currentChannel.AddBlock(block)
 		if errors.As(err, &_chFullErr) {
 			// current block didn't get added because channel is already full
@@ -466,6 +557,10 @@ func (s *channelManager) outputFrames() error {
 	}
 	if !s.currentChannel.IsFull() {
 		return nil
+	}
+
+	if c := s.currentChannel; c.runBlocks > 0 && c.mustEnd && !c.EndsOnRunBoundary() {
+		s.metr.RecordProofAggregateChannelBeforeBoundary()
 	}
 
 	inBytes, outBytes := s.currentChannel.InputBytes(), s.currentChannel.OutputBytes()
@@ -540,6 +635,9 @@ func (s *channelManager) PruneSafeBlocks(num int) {
 		panic("tried to prune more blocks than available")
 	}
 	s.blockCursor -= int(num)
+	if len(discardedBlocks) > 0 {
+		s.pruneAggregates(discardedBlocks[len(discardedBlocks)-1].NumberU64())
+	}
 	if s.blockCursor < 0 {
 		// This is a rare edge case where a block is loaded and pruned before it gets into a channel.
 		// This may happen if a previous batcher instance build a channel with that block
@@ -561,6 +659,9 @@ func (s *channelManager) PruneChannels(num int) {
 		if s.channelQueue[i] == s.currentChannel {
 			clearCurrentChannel = true
 		}
+	}
+	if s.hold != nil && slices.Contains(s.channelQueue[:num], s.hold.channel) {
+		s.hold = nil
 	}
 	s.channelQueue = s.channelQueue[num:]
 	s.metr.RecordChannelQueueLength(len(s.channelQueue))

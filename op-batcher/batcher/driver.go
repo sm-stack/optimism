@@ -96,6 +96,8 @@ type DriverSetup struct {
 	ChannelConfig     ChannelConfigProvider
 	AltDA             *altda.DAClient
 	ChannelOutFactory ChannelOutFactory
+	// ProofAggregates supplies proof aggregates to post. Nil posts none.
+	ProofAggregates ProofAggregateSource
 }
 
 // BatchSubmitter encapsulates a service responsible for submitting L2 tx
@@ -113,13 +115,18 @@ type BatchSubmitter struct {
 	txpoolState       TxPoolState
 	txpoolBlockedBlob bool
 
-	channelMgrMutex sync.Mutex // guards channelMgr and prevCurrentL1
+	channelMgrMutex sync.Mutex // guards channelMgr, prevCurrentL1 and the run length read
 	channelMgr      *channelManager
 	prevCurrentL1   eth.L1BlockRef // cached CurrentL1 from the last syncStatus
+	lastRunBlocks   uint64         // the run length last read
+	runBlocksRead   bool           // whether the proof aggregation run length was read since starting
 
 	throttleController *throttler.ThrottleController
 
 	publishSignal chan pubInfo
+	// holdWake wakes the publishing loop while a channel is held, so that a hold ends without
+	// waiting for the block loading loop's next tick.
+	holdWake chan struct{}
 }
 
 // NewBatchSubmitter initializes the BatchSubmitter driver from a preconfigured DriverSetup
@@ -128,10 +135,14 @@ func NewBatchSubmitter(setup DriverSetup) *BatchSubmitter {
 	if setup.ChannelOutFactory != nil {
 		state.SetChannelOutFactory(setup.ChannelOutFactory)
 	}
+	if setup.ProofAggregates != nil {
+		state.SetProofAggregateHold(setup.Config.ProofAggregateHold)
+	}
 
 	batcher := &BatchSubmitter{
 		DriverSetup: setup,
 		channelMgr:  state,
+		holdWake:    make(chan struct{}, 1),
 	}
 
 	err := batcher.SetThrottleController(setup.Config.ThrottleParams.ControllerType, setup.Config.ThrottleParams.PIDConfig)
@@ -169,6 +180,13 @@ func (l *BatchSubmitter) StartBatchSubmitting() error {
 		}
 	}
 
+	if l.ProofAggregates != nil {
+		if err := l.awaitRunBlocks(l.shutdownCtx); err != nil {
+			l.running = false
+			return fmt.Errorf("error reading the proof aggregation run length: %w", err)
+		}
+	}
+
 	receiptsCh := make(chan txmgr.TxReceipt[txRef])
 
 	l.txpoolState = TxpoolGood // no need to lock mutex as no other routines yet exist
@@ -190,6 +208,11 @@ func (l *BatchSubmitter) StartBatchSubmitting() error {
 	go l.receiptsLoop(l.wg, receiptsCh)                                           // ranges over receiptsCh channel
 	go l.publishingLoop(l.killCtx, l.wg, receiptsCh, publishSignal)               // ranges over publishSignal, spawns routines which send on receiptsCh. Closes receiptsCh when done.
 	go l.blockLoadingLoop(l.shutdownCtx, l.wg, unsafeBytesUpdated, publishSignal) // sends on unsafeBytesUpdated (if throttling enabled), and publishSignal. Closes them both when done
+
+	if l.ProofAggregates != nil {
+		l.wg.Add(1)
+		go l.proofAggregateLoop(l.shutdownCtx, l.wg) // polls ProofAggregates into the channel manager
+	}
 
 	l.Log.Info("Batch Submitter started")
 	return nil
@@ -557,6 +580,8 @@ func (l *BatchSubmitter) blockLoadingLoop(ctx context.Context, wg *sync.WaitGrou
 				}
 			}
 			l.tryPublishSignal(publishSignal, pubInfo{}) // always signal the publishing loop to ensure we periodically publish even if we aren't loading blocks
+		case <-l.holdWake:
+			l.tryPublishSignal(publishSignal, pubInfo{})
 		case <-ctx.Done():
 			l.Log.Info("blockLoadingLoop returning")
 			return

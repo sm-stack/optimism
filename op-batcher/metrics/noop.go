@@ -59,6 +59,12 @@ func (*noopMetrics) RecordBatchTxSubmitted() {}
 func (*noopMetrics) RecordBatchTxSuccess()   {}
 func (*noopMetrics) RecordBatchTxFailed()    {}
 func (*noopMetrics) RecordBlobUsedBytes(int) {}
+
+func (*noopMetrics) RecordProofAggregateHold()                              {}
+func (*noopMetrics) RecordProofAggregateHoldReleased(string, time.Duration) {}
+func (*noopMetrics) RecordProofAggregateWritten(string)                     {}
+func (*noopMetrics) RecordProofAggregateChannelBeforeBoundary()             {}
+func (*noopMetrics) RecordProofAggregateRunBlocksChanged()                  {}
 func (*noopMetrics) StartBalanceMetrics(log.Logger, *ethclient.Client, common.Address) io.Closer {
 	return nil
 }

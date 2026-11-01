@@ -16,14 +16,34 @@ type SizedBlock struct {
 	*eth.ExecutionPayload
 	rawSize          uint64
 	estimatedDABytes uint64
+	// dependent is set if a transaction of the block relies on a proof statement, so that a proof
+	// aggregate answers for the block.
+	dependent bool
 }
 
 func ToSizedBlock(payload *eth.ExecutionPayload) SizedBlock {
-	b := SizedBlock{ExecutionPayload: payload}
+	b := SizedBlock{ExecutionPayload: payload, dependent: declaresStatement(payload)}
 	// populate caches
 	b.RawSize()
 	b.EstimatedDABytes()
 	return b
+}
+
+// declaresStatement returns whether a transaction of payload declares a dependency on a proof
+// statement.
+func declaresStatement(payload *eth.ExecutionPayload) bool {
+	for _, tx := range payload.Transactions {
+		deps, ok := optypes.DeclaredDependencies(tx)
+		if !ok {
+			continue
+		}
+		for _, dep := range deps {
+			if _, ok := dep.Statement(); ok {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func (b SizedBlock) Hash() common.Hash { return b.BlockHash }

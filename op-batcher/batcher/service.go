@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/ethereum/go-ethereum/ethclient"
+	gethrpc "github.com/ethereum/go-ethereum/rpc"
 
 	altda "github.com/ethereum-optimism/optimism/op-alt-da"
 	"github.com/ethereum-optimism/optimism/op-batcher/config"
@@ -47,6 +48,10 @@ type BatcherConfig struct {
 	WaitNodeSync        bool
 	CheckRecentTxsDepth int
 
+	// ProofAggregateHold is how long a channel ending a proof aggregation run is held back for its
+	// blocks' proof aggregate.
+	ProofAggregateHold time.Duration
+
 	// For throttling DA. See CLIConfig in config.go for details on these parameters.
 	ThrottleParams config.ThrottleParams
 }
@@ -61,6 +66,10 @@ type BatcherService struct {
 	EndpointProvider dial.L2EndpointProvider
 	TxManager        txmgr.TxManager
 	AltDA            *altda.DAClient
+	// ProofAggregates supplies the proof aggregates to post, if configured.
+	ProofAggregates ProofAggregateSource
+	// proofAggregateRPC is the client ProofAggregates reads from, if dialled.
+	proofAggregateRPC *gethrpc.Client
 
 	BatcherConfig
 
@@ -108,6 +117,7 @@ func (bs *BatcherService) initFromCLIConfig(ctx context.Context, closeApp contex
 	bs.NetworkTimeout = cfg.TxMgrConfig.NetworkTimeout
 	bs.CheckRecentTxsDepth = cfg.CheckRecentTxsDepth
 	bs.WaitNodeSync = cfg.WaitNodeSync
+	bs.ProofAggregateHold = cfg.ProofAggregateHold
 
 	bs.ThrottleParams = config.ThrottleParams{
 		LowerThreshold:      cfg.ThrottleConfig.LowerThreshold,
@@ -216,6 +226,15 @@ func (bs *BatcherService) initRPCClients(ctx context.Context, cfg *CLIConfig) er
 		}
 	}
 	bs.EndpointProvider = endpointProvider
+
+	if cfg.ProofAggregateRpc != "" {
+		client, err := gethrpc.DialContext(ctx, cfg.ProofAggregateRpc)
+		if err != nil {
+			return fmt.Errorf("failed to dial proof aggregate RPC: %w", err)
+		}
+		bs.proofAggregateRPC = client
+		bs.ProofAggregates = NewRPCProofAggregateSource(client)
+	}
 
 	return nil
 }
@@ -406,6 +425,7 @@ func (bs *BatcherService) initDriver(opts ...DriverSetupOption) {
 		EndpointProvider: bs.EndpointProvider,
 		ChannelConfig:    bs.ChannelConfig,
 		AltDA:            bs.AltDA,
+		ProofAggregates:  bs.ProofAggregates,
 	}
 	for _, opt := range opts {
 		opt(&ds)
@@ -518,6 +538,9 @@ func (bs *BatcherService) Stop(ctx context.Context) error {
 	}
 	if bs.EndpointProvider != nil {
 		bs.EndpointProvider.Close()
+	}
+	if bs.proofAggregateRPC != nil {
+		bs.proofAggregateRPC.Close()
 	}
 
 	if result == nil {

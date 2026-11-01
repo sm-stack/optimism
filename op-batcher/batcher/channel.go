@@ -102,8 +102,9 @@ func (c *channel) isTimedOut() bool {
 }
 
 // isFullySubmitted returns true if the channel has been fully submitted (all transactions are confirmed).
+// A full channel with no frames output yet, held for its proof aggregate, is not.
 func (c *channel) isFullySubmitted() bool {
-	return c.IsFull() && len(c.pendingTransactions)+c.PendingFrames() == 0
+	return c.IsFull() && c.TotalFrames() > 0 && len(c.pendingTransactions)+c.PendingFrames() == 0
 }
 
 func (c *channel) noneSubmitted() bool {
