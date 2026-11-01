@@ -3,14 +3,17 @@ package pipeline
 import (
 	"testing"
 
+	"github.com/ethereum-optimism/optimism/op-chain-ops/foundry"
 	"github.com/ethereum-optimism/optimism/op-chain-ops/genesis"
 	"github.com/ethereum-optimism/optimism/op-core/devfeatures"
+	"github.com/ethereum-optimism/optimism/op-core/eip8130"
 	"github.com/ethereum-optimism/optimism/op-deployer/pkg/deployer/artifacts"
 	"github.com/ethereum-optimism/optimism/op-deployer/pkg/deployer/standard"
 	"github.com/ethereum-optimism/optimism/op-deployer/pkg/deployer/state"
 	op_service "github.com/ethereum-optimism/optimism/op-service"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/hexutil"
+	"github.com/ethereum/go-ethereum/core/types"
 
 	"github.com/stretchr/testify/require"
 )
@@ -234,6 +237,32 @@ func TestCalculateL2GenesisOverrides(t *testing.T) {
 				require.Equal(t, tc.expectedOverrides, overrides)
 				require.Equal(t, tc.expectedSchedule(), schedule)
 			}
+		})
+	}
+}
+
+// TestAddLagoonGenesisContracts checks only a genesis that activates Lagoon gets the contracts its activation deposits
+// would have deployed.
+func TestAddLagoonGenesisContracts(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		offset *hexutil.Uint64
+		want   bool
+	}{
+		{"not scheduled", nil, false},
+		{"at genesis", op_service.U64UtilPtr(0), true},
+		{"after genesis", op_service.U64UtilPtr(0x10), false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			schedule := standard.DefaultHardforkSchedule()
+			schedule.L2GenesisLagoonTimeOffset = tc.offset
+			allocs := &foundry.ForgeAllocs{Accounts: types.GenesisAlloc{}}
+			addLagoonGenesisContracts(allocs, schedule)
+			if !tc.want {
+				require.Empty(t, allocs.Accounts)
+				return
+			}
+			require.Equal(t, types.GenesisAlloc(eip8130.GenesisAccounts()), allocs.Accounts)
 		})
 	}
 }

@@ -1,0 +1,15 @@
+_actors slot 0 offset 0
+_accountState slot 1 offset 0
+struct Keystore.AccountState.multichainSequence slot 0 offset 0 bytes 8
+struct Keystore.AccountState.localSequence slot 0 offset 8 bytes 4
+struct Keystore.AccountState.localEpoch slot 0 offset 12 bytes 4
+struct Keystore.AccountState.flags slot 0 offset 16 bytes 1
+struct Keystore.AccountState.lockUnion slot 0 offset 17 bytes 6
+struct Keystore.AccountState.defaultEOAExpiry slot 0 offset 23 bytes 6
+struct Keystore.AccountState.defaultEOAScope slot 0 offset 29 bytes 2
+struct Keystore.ActorConfig.authenticator slot 0 offset 0 bytes 20
+struct Keystore.ActorConfig.expiry slot 0 offset 20 bytes 6
+struct Keystore.ActorConfig.scope slot 0 offset 26 bytes 2
+struct Keystore.ActorRecord.config slot 0 offset 0 bytes 32
+struct Keystore.ActorRecord.policyManager slot 1 offset 0 bytes 20
+struct Keystore.ActorRecord.policyCommitment slot 2 offset 0 bytes 32

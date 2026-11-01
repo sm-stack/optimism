@@ -19,6 +19,7 @@ import (
 	"github.com/ethereum-optimism/optimism/op-chain-ops/script"
 	gameTypes "github.com/ethereum-optimism/optimism/op-challenger/game/types"
 	"github.com/ethereum-optimism/optimism/op-core/devfeatures"
+	"github.com/ethereum-optimism/optimism/op-core/eip8130"
 	"github.com/ethereum-optimism/optimism/op-deployer/pkg/deployer/manage"
 	"github.com/ethereum-optimism/optimism/op-deployer/pkg/deployer/opcm"
 	"github.com/ethereum-optimism/optimism/op-service/bigs"
@@ -469,6 +470,11 @@ func CompleteL2(l2Host *script.Host, cfg *L2Config, l1Block *types.Block, deploy
 	// and make sure it's not in the state.
 	if err := ensureNoDeployed(allocs, sysGenesisDeployer); err != nil {
 		return nil, fmt.Errorf("unexpected deployed account content by L2 genesis deployer: %w", err)
+	}
+
+	// What Lagoon's activation deposits deploy, on a chain that activates Lagoon at genesis and so never runs them.
+	if lagoonAtGenesis(cfg.L2GenesisLagoonTimeOffset) {
+		maps.Copy(allocs.Accounts, eip8130.GenesisAccounts())
 	}
 
 	if err := genesis.CheckL2GenesisAllocs(allocs, genesis.CheckL2AllocsOpts{

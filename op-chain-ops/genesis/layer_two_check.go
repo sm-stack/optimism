@@ -11,6 +11,7 @@ import (
 	"github.com/ethereum/go-ethereum/core/types"
 
 	"github.com/ethereum-optimism/optimism/op-chain-ops/foundry"
+	"github.com/ethereum-optimism/optimism/op-core/eip8130"
 	"github.com/ethereum-optimism/optimism/op-core/predeploys"
 )
 
@@ -130,6 +131,12 @@ func classifyAccount(
 		if len(account.Code) == 0 {
 			return fmt.Errorf("code-namespace account %s has no code: %s", addr, describeAccount(account))
 		}
+	case isEIP8130Account(addr):
+		want := eip8130.GenesisAccounts()[addr]
+		if !bytes.Equal(account.Code, want.Code) || account.Nonce != want.Nonce || len(account.Storage) != 0 ||
+			balanceOf(account).Sign() != 0 {
+			return fmt.Errorf("EIP-8130 account %s is not as Lagoon deploys it: %s", addr, describeAccount(account))
+		}
 	case isNamedPreinstall(addr):
 		if len(account.Code) == 0 {
 			return fmt.Errorf("preinstall %s has no code: %s", addr, describeAccount(account))
@@ -156,6 +163,12 @@ func isNamedPreinstall(addr common.Address) bool {
 		return true
 	}
 	return addr == createXAddr || addr == predeploys.EIP4788ContractAddr || addr == predeploys.EIP2935ContractAddr
+}
+
+// isEIP8130Account returns true for the contracts Lagoon deploys, which a genesis activating Lagoon holds
+// (eip8130.GenesisAccounts).
+func isEIP8130Account(addr common.Address) bool {
+	return addr == eip8130.KeystoreAddress() || addr == eip8130.StatementAuthenticatorAddress()
 }
 
 // isPrecompile returns true for addresses below 0x100, all of which receive 1 wei at genesis.

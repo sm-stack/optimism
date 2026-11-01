@@ -2,11 +2,14 @@ package pipeline
 
 import (
 	"fmt"
+	"maps"
 	"math/big"
 
 	"github.com/ethereum-optimism/optimism/op-chain-ops/genesis"
 	"github.com/ethereum-optimism/optimism/op-chain-ops/script"
 	"github.com/ethereum-optimism/optimism/op-core/devfeatures"
+	"github.com/ethereum-optimism/optimism/op-core/eip8130"
+	"github.com/ethereum-optimism/optimism/op-core/forks"
 	"github.com/ethereum/go-ethereum/common/hexutil"
 
 	"github.com/ethereum-optimism/optimism/op-deployer/pkg/env"
@@ -148,6 +151,8 @@ func GenerateL2Genesis(pEnv *Env, intent *state.Intent, bundle artifacts.Bundle,
 		return fmt.Errorf("failed to dump state: %w", err)
 	}
 
+	addLagoonGenesisContracts(dump, schedule)
+
 	if err := genesis.CheckL2GenesisAllocs(dump, genesis.CheckL2AllocsOpts{
 		FundDevAccounts: overrides.FundDevAccounts,
 		// Tagged L2Genesis artifacts predating the #21339 prank nonce reset leave the
@@ -162,6 +167,15 @@ func GenerateL2Genesis(pEnv *Env, intent *state.Intent, bundle artifacts.Bundle,
 	}
 
 	return nil
+}
+
+// addLagoonGenesisContracts places what Lagoon's activation deposits deploy, the EIP-8130 Keystore and the
+// STATEMENT authenticator, on a chain that activates Lagoon at genesis and so never runs them.
+func addLagoonGenesisContracts(allocs *foundry.ForgeAllocs, schedule *genesis.UpgradeScheduleDeployConfig) {
+	if !schedule.IsForkActive(forks.Lagoon, 0, 0) {
+		return
+	}
+	maps.Copy(allocs.Accounts, eip8130.GenesisAccounts())
 }
 
 func calculateL2GenesisOverrides(intent *state.Intent, thisIntent *state.ChainIntent) (l2GenesisOverrides, *genesis.UpgradeScheduleDeployConfig, error) {
