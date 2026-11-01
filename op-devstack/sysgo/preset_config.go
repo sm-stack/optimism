@@ -5,6 +5,7 @@ import (
 	"time"
 
 	gameTypes "github.com/ethereum-optimism/optimism/op-challenger/game/types"
+	sharedchallenger "github.com/ethereum-optimism/optimism/op-devstack/shared/challenger"
 	nodeSync "github.com/ethereum-optimism/optimism/op-node/rollup/sync"
 	"github.com/ethereum-optimism/optimism/op-service/eth"
 )
@@ -68,6 +69,11 @@ type PresetConfig struct {
 	SkipHonestProposer bool
 	// SkipHonestChallenger skips starting the honest challenger.
 	SkipHonestChallenger bool
+	// StartOpAggregator starts op-aggregator against the sequencer's op-reth, to prove its proof
+	// aggregates.
+	StartOpAggregator bool
+	// ChallengerOptions configure the honest interop challenger, applied after its defaults.
+	ChallengerOptions []sharedchallenger.Option
 	// SupernodeVerifierSyncMode overrides the supernode VN's sync mode when set.
 	SupernodeVerifierSyncMode *nodeSync.Mode
 	// InteropActivationDelaySeconds offsets Interop activation past genesis (0 = at genesis).

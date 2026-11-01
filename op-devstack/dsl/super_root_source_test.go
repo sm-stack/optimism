@@ -4,6 +4,7 @@ import (
 	"context"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/ethereum-optimism/optimism/op-devstack/devtest"
 	"github.com/ethereum-optimism/optimism/op-service/apis"
@@ -168,6 +169,8 @@ func (s *stubSuperRootSource) SuperRootAtTimestamp(timestamp uint64) eth.SuperRo
 func (s *stubSuperRootSource) AssertSuperRootAtTimestamp(uint64, common.Hash) {}
 
 func (s *stubSuperRootSource) AwaitValidatedTimestamp(uint64) {}
+
+func (s *stubSuperRootSource) AwaitValidatedTimestampWithin(uint64, time.Duration) {}
 
 func (s *stubSuperRootSource) AwaitFullyProcessedL1(targetL1 uint64) {
 	s.awaitOnce.Do(func() { close(s.awaiting) })

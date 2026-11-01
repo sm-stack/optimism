@@ -310,6 +310,10 @@ func startMinimalBatcher(
 			EnableAdmin: true,
 		},
 	}
+	// op-reth sequencers hand out the proof aggregates the batcher posts.
+	if _, ok := l2EL.(*OpReth); ok {
+		batcherCLIConfig.ProofAggregateRpc = l2EL.UserRPC()
+	}
 	for _, opt := range batcherOpts {
 		if opt == nil {
 			continue

@@ -31,6 +31,7 @@ const (
 	optionKindPreGenesisSuperGame
 	optionKindSkipHonestProposer
 	optionKindSkipHonestChallenger
+	optionKindChallenger
 	optionKindSupernodeVerifierSyncMode
 	optionKindInteropActivationDelay
 	optionKindInteropAtGenesis
@@ -39,6 +40,7 @@ const (
 	optionKindZKProposer
 	optionKindConductorFastHealthChecks
 	optionKindL2ToL2MessageExpiryPeriod
+	optionKindOpAggregator
 )
 
 const allOptionKinds = optionKindDeployer |
@@ -61,6 +63,7 @@ const allOptionKinds = optionKindDeployer |
 	optionKindPreGenesisSuperGame |
 	optionKindSkipHonestProposer |
 	optionKindSkipHonestChallenger |
+	optionKindChallenger |
 	optionKindSupernodeVerifierSyncMode |
 	optionKindInteropActivationDelay |
 	optionKindInteropAtGenesis |
@@ -68,7 +71,8 @@ const allOptionKinds = optionKindDeployer |
 	optionKindZKDisputeGame |
 	optionKindZKProposer |
 	optionKindConductorFastHealthChecks |
-	optionKindL2ToL2MessageExpiryPeriod
+	optionKindL2ToL2MessageExpiryPeriod |
+	optionKindOpAggregator
 
 var optionKindLabels = []struct {
 	kind  optionKinds
@@ -94,6 +98,7 @@ var optionKindLabels = []struct {
 	{kind: optionKindPreGenesisSuperGame, label: "pre-genesis super game"},
 	{kind: optionKindSkipHonestProposer, label: "skip honest proposer"},
 	{kind: optionKindSkipHonestChallenger, label: "skip honest challenger"},
+	{kind: optionKindChallenger, label: "challenger options"},
 	{kind: optionKindSupernodeVerifierSyncMode, label: "supernode verifier sync mode"},
 	{kind: optionKindInteropActivationDelay, label: "interop activation delay"},
 	{kind: optionKindInteropAtGenesis, label: "interop at genesis"},
@@ -102,6 +107,7 @@ var optionKindLabels = []struct {
 	{kind: optionKindZKProposer, label: "ZK proposer options"},
 	{kind: optionKindConductorFastHealthChecks, label: "conductor fast health checks"},
 	{kind: optionKindL2ToL2MessageExpiryPeriod, label: "L2ToL2 message expiry period"},
+	{kind: optionKindOpAggregator, label: "op-aggregator"},
 }
 
 func (k optionKinds) String() string {
@@ -190,7 +196,12 @@ const supernodeProofsPresetSupportedOptionKinds = optionKindDeployer |
 	optionKindL1EL |
 	optionKindTimeTravel |
 	optionKindMessageExpiryWindow |
-	optionKindSkipHonestProposer
+	optionKindSkipHonestProposer |
+	optionKindChallenger |
+	optionKindOpAggregator
+
+const singleChainSupernodeProofsPresetSupportedOptionKinds = supernodeProofsPresetSupportedOptionKinds |
+	optionKindOpReth
 
 const singleChainInteropNoSupernodePresetSupportedOptionKinds = optionKindOpReth
 

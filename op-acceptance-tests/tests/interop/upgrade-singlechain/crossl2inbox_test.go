@@ -5,6 +5,7 @@ import (
 
 	"github.com/ethereum-optimism/optimism/op-chain-ops/devkeys"
 	"github.com/ethereum-optimism/optimism/op-chain-ops/genesis"
+	"github.com/ethereum-optimism/optimism/op-core/eip8130"
 	"github.com/ethereum-optimism/optimism/op-core/forks"
 	"github.com/ethereum-optimism/optimism/op-core/predeploys"
 	"github.com/ethereum-optimism/optimism/op-devstack/devtest"
@@ -46,5 +47,21 @@ func TestPostInbox(gt *testing.T) {
 		verifyNoCrossL2InboxAtBlock(pre)
 		verifyNoCrossL2InboxAtBlock(activationBlock.Number)
 		verifyNoCrossL2InboxAtBlock(activationBlock.Number + 1)
+
+		// The activation block deploys the EIP-8130 Keystore and the STATEMENT authenticator.
+		for _, c := range []struct {
+			addr    common.Address
+			runtime []byte
+		}{
+			{eip8130.KeystoreAddress(), eip8130.KeystoreRuntime()},
+			{eip8130.StatementAuthenticatorAddress(), eip8130.StatementAuthenticatorRuntime()},
+		} {
+			code, err := el.EthClient().CodeAtHash(t.Ctx(), c.addr, el.BlockRefByNumber(pre).Hash)
+			require.NoError(err)
+			require.Empty(code, "%s before activation", c.addr)
+			code, err = el.EthClient().CodeAtHash(t.Ctx(), c.addr, activationBlock.Hash)
+			require.NoError(err)
+			require.Equal(c.runtime, code, "%s at activation", c.addr)
+		}
 	})
 }

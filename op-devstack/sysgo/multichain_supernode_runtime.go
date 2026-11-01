@@ -118,8 +118,9 @@ func NewTwoL2SupernodeRuntimeWithConfig(t devtest.T, cfg PresetConfig) *MultiCha
 
 // startSupernodeEL starts an L2 EL node for the supernode runtime,
 // respecting DEVSTACK_L2EL_KIND (defaults to op-reth when unset).
-func startSupernodeEL(t devtest.T, l2Net *L2Network, jwtPath string, jwtSecret [32]byte) L2ELNode {
-	return startL2ELForKey(t, l2Net, jwtPath, jwtSecret, "sequencer", NewELNodeIdentity(0), ResolveMixedL2ELOpts(t)...)
+func startSupernodeEL(t devtest.T, l2Net *L2Network, jwtPath string, jwtSecret [32]byte, opts ...OpRethOption) L2ELNode {
+	opts = append(ResolveMixedL2ELOpts(t), opts...)
+	return startL2ELForKey(t, l2Net, jwtPath, jwtSecret, "sequencer", NewELNodeIdentity(0), opts...)
 }
 
 // startSupernodeELWithInteropURL starts an L2 EL node with --rollup.interop-http
@@ -176,7 +177,7 @@ func newSingleChainSupernodeRuntimeWithConfig(t devtest.T, lagoonAtGenesis bool,
 			return l1EL, l1CL
 		}, cfg.DeployerOptions...)
 	validateSimpleInteropPresetConfig(t, cfg, l2Net)
-	l2EL := startSupernodeEL(t, l2Net, jwtPath, jwtSecret)
+	l2EL := startSupernodeEL(t, l2Net, jwtPath, jwtSecret, cfg.OpRethOptions...)
 
 	var depSetStatic *depset.StaticConfigDependencySet
 	if depSet != nil {

@@ -152,7 +152,7 @@ func NewThreeChainInterop(t devtest.T, opts ...Option) *ThreeChainInterop {
 // NewSingleChainInterop creates a fresh SingleChainInterop target for the
 // current test using the single-chain super-root proofs system backed by op-supernode.
 func NewSingleChainInterop(t devtest.T, opts ...Option) *SingleChainInterop {
-	presetCfg, _ := collectSupportedPresetConfig(t, "NewSingleChainInterop", opts, supernodeProofsPresetSupportedOptionKinds)
+	presetCfg, _ := collectSupportedPresetConfig(t, "NewSingleChainInterop", opts, singleChainSupernodeProofsPresetSupportedOptionKinds)
 	return singleChainInteropFromSupernodeProofsRuntime(t, sysgo.NewSingleChainSupernodeProofsRuntimeWithConfig(t, true, presetCfg))
 }
 
@@ -166,7 +166,7 @@ func NewSimpleInteropIsthmusSuper(t devtest.T, opts ...Option) *SimpleInterop {
 // NewSingleChainInteropIsthmusSuper creates a fresh SingleChainInterop target for the
 // current test using the single-chain Isthmus super-root system backed by op-supernode.
 func NewSingleChainInteropIsthmusSuper(t devtest.T, opts ...Option) *SingleChainInterop {
-	presetCfg, _ := collectSupportedPresetConfig(t, "NewSingleChainInteropIsthmusSuper", opts, supernodeProofsPresetSupportedOptionKinds)
+	presetCfg, _ := collectSupportedPresetConfig(t, "NewSingleChainInteropIsthmusSuper", opts, singleChainSupernodeProofsPresetSupportedOptionKinds)
 	return singleChainInteropFromSupernodeProofsRuntime(t, sysgo.NewSingleChainSupernodeProofsRuntimeWithConfig(t, false, presetCfg))
 }
 
@@ -194,7 +194,7 @@ func NewSingleChainInteropNoSupernodeZKDispute(t devtest.T, opts ...Option) *Sin
 // migration runs. This exercises the initial-deploy path for super-root
 // dispute games tracked by ethereum-optimism/optimism#18729.
 func NewSingleChainInteropSuperRootAtGenesis(t devtest.T, opts ...Option) *SingleChainInterop {
-	presetCfg, _ := collectSupportedPresetConfig(t, "NewSingleChainInteropSuperRootAtGenesis", opts, supernodeProofsPresetSupportedOptionKinds)
+	presetCfg, _ := collectSupportedPresetConfig(t, "NewSingleChainInteropSuperRootAtGenesis", opts, singleChainSupernodeProofsPresetSupportedOptionKinds)
 	return singleChainInteropFromSupernodeProofsRuntime(t, sysgo.NewSingleChainSuperRootAtGenesisRuntimeWithConfig(t, presetCfg))
 }
 

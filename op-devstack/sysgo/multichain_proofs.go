@@ -109,6 +109,7 @@ func attachSupernodeSuperProofs(t devtest.T, runtime *MultiChainRuntime, cfg Pre
 					nets,
 					els,
 					gameTypes.ZKDisputeGameType,
+					cfg.ChallengerOptions...,
 				)
 				runtime.L2ChallengerConfig = challenger.Config()
 			}
@@ -177,6 +178,7 @@ func attachSuperChallengerAndProposer(
 			nets,
 			els,
 			gameTypes.SuperCannonKonaGameType,
+			cfg.ChallengerOptions...,
 		)
 		runtime.L2ChallengerConfig = challenger.Config()
 	}
@@ -266,6 +268,11 @@ func NewSingleChainSupernodeProofsRuntimeWithConfig(t devtest.T, lagoonAtGenesis
 		},
 	}, cfg.DeployerOptions...)
 	runtime := newSingleChainSupernodeRuntimeWithConfig(t, lagoonAtGenesis, cfg)
+	if cfg.StartOpAggregator {
+		sequencer, ok := runtime.Chains["l2a"].EL.(*OpReth)
+		t.Require().True(ok, "op-aggregator proves an op-reth sequencer's aggregates")
+		StartOpAggregator(t, sequencer)
+	}
 	attachTestSequencerToRuntime(t, runtime, "dev")
 	attachSuperChallengerAndProposer(t, runtime, cfg, gameTypes.SuperCannonKonaGameType)
 	return runtime
@@ -343,6 +350,7 @@ func startInteropChallenger(
 	l2Nets []*L2Network,
 	l2ELs []L2ELNode,
 	gameType gameTypes.GameType,
+	extraOptions ...sharedchallenger.Option,
 ) *L2Challenger {
 	require := t.Require()
 	require.NotEmpty(l2Nets, "at least one L2 network is required")
@@ -384,6 +392,7 @@ func startInteropChallenger(
 	default:
 		require.FailNowf("unsupported interop challenger game type", "%v", gameType)
 	}
+	options = append(options, extraOptions...)
 	cfg, err := sharedchallenger.NewInteropChallengerConfig(
 		t.Ctx(),
 		t.TempDirWithPrefix("super-challenger"),

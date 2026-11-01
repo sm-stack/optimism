@@ -19,6 +19,9 @@ import (
 	"github.com/ethereum-optimism/optimism/op-service/sources"
 )
 
+// ValidatedTimeout is how long AwaitValidatedTimestamp waits.
+const ValidatedTimeout = 5 * DefaultTimeout
+
 // SuperRootSource is the super-root query surface the dispute-game DSL needs. It is
 // satisfied by both op-supernode (interop, multi-chain) and op-node (non-interop,
 // single-chain), letting the same dispute-game tests run against either source.
@@ -28,6 +31,7 @@ type SuperRootSource interface {
 	SuperRootAtTimestamp(timestamp uint64) eth.SuperRootAtTimestampResponse
 	AssertSuperRootAtTimestamp(l2SequenceNumber uint64, rootClaim common.Hash)
 	AwaitValidatedTimestamp(timestamp uint64)
+	AwaitValidatedTimestampWithin(timestamp uint64, timeout time.Duration)
 	AwaitFullyProcessedL1(targetL1 uint64)
 }
 
@@ -86,7 +90,12 @@ func (s *SuperRootQuerier) AssertSuperRootAtTimestamp(l2SequenceNumber uint64, r
 
 // AwaitValidatedTimestamp waits for the super-root at the given timestamp to be available.
 func (s *SuperRootQuerier) AwaitValidatedTimestamp(timestamp uint64) {
-	ctx, cancel := context.WithTimeout(s.ctx, 5*DefaultTimeout)
+	s.AwaitValidatedTimestampWithin(timestamp, ValidatedTimeout)
+}
+
+// AwaitValidatedTimestampWithin waits up to timeout for the super root at timestamp to be validated.
+func (s *SuperRootQuerier) AwaitValidatedTimestampWithin(timestamp uint64, timeout time.Duration) {
+	ctx, cancel := context.WithTimeout(s.ctx, timeout)
 	defer cancel()
 	err := wait.For(ctx, 1*time.Second, func() (bool, error) {
 		resp, err := s.api.SuperRootAtTimestamp(ctx, timestamp)

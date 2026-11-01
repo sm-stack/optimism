@@ -5,6 +5,7 @@ import (
 	"time"
 
 	gameTypes "github.com/ethereum-optimism/optimism/op-challenger/game/types"
+	sharedchallenger "github.com/ethereum-optimism/optimism/op-devstack/shared/challenger"
 	"github.com/ethereum-optimism/optimism/op-devstack/sysgo"
 	"github.com/ethereum-optimism/optimism/op-service/eth"
 	"github.com/stretchr/testify/require"
@@ -40,6 +41,7 @@ func TestOptionKindsFromCompositeOptions(t *testing.T) {
 		require.Zero(t, WithGlobalSyncTesterELOption(nil).optionKinds())
 		require.Zero(t, WithProposerOption(nil).optionKinds())
 		require.Zero(t, WithZKProposerOption(nil).optionKinds())
+		require.Zero(t, WithChallengerOptions(nil).optionKinds())
 		require.Zero(t, WithPreGenesisSuperGame().optionKinds())
 		require.Zero(t, AfterBuild(nil).optionKinds())
 	})
@@ -96,6 +98,18 @@ func TestUnsupportedPresetOptionKinds(t *testing.T) {
 				RequireGameTypePresent(gameTypes.CannonKonaGameType),
 			),
 			want: 0,
+		},
+		{
+			name:      "supernode proofs allow challenger options",
+			supported: supernodeProofsPresetSupportedOptionKinds,
+			opts:      WithChallengerOptions(sharedchallenger.WithCannonKonaSnapshotFreq(1)),
+			want:      0,
+		},
+		{
+			name:      "minimal rejects challenger options",
+			supported: minimalPresetSupportedOptionKinds,
+			opts:      WithChallengerOptions(sharedchallenger.WithCannonKonaSnapshotFreq(1)),
+			want:      optionKindChallenger,
 		},
 		{
 			name:      "minimal allows l1 EL override",
@@ -158,8 +172,14 @@ func TestUnsupportedPresetOptionKinds(t *testing.T) {
 			want:      optionKindZKProposer,
 		},
 		{
-			name:      "single chain supernode proofs reject op-reth options",
-			supported: supernodeProofsPresetSupportedOptionKinds,
+			name:      "single chain supernode proofs accept op-reth options",
+			supported: singleChainSupernodeProofsPresetSupportedOptionKinds,
+			opts:      WithOpRethOption(sysgo.OpRethWithExtraArgs("--testing.sdm-fixed-policy")),
+			want:      0,
+		},
+		{
+			name:      "two chain supernode proofs reject op-reth options",
+			supported: twoL2SupernodeProofsPresetSupportedOptionKinds,
 			opts:      WithOpRethOption(sysgo.OpRethWithExtraArgs("--testing.sdm-fixed-policy")),
 			want:      optionKindOpReth,
 		},

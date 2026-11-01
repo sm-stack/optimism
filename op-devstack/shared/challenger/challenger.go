@@ -224,6 +224,16 @@ func WithZKDisputeGameType() Option {
 	}
 }
 
+// WithCannonKonaSnapshotFreq sets how many steps apart the cannon-kona VM saves snapshots,
+// overriding the 10 million that applyVmConfig sets. Each snapshot writes the whole VM memory, so a
+// trace of billions of steps runs many times slower at that interval.
+func WithCannonKonaSnapshotFreq(freq uint) Option {
+	return func(_ context.Context, c *config.Config) error {
+		c.CannonKona.SnapshotFreq = freq
+		return nil
+	}
+}
+
 func WithFastGames() Option {
 	return func(_ context.Context, c *config.Config) error {
 		c.GameTypes = append(c.GameTypes, gameTypes.FastGameType)

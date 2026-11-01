@@ -4,6 +4,7 @@ import (
 	"time"
 
 	gameTypes "github.com/ethereum-optimism/optimism/op-challenger/game/types"
+	sharedchallenger "github.com/ethereum-optimism/optimism/op-devstack/shared/challenger"
 	"github.com/ethereum-optimism/optimism/op-devstack/sysgo"
 	nodeSync "github.com/ethereum-optimism/optimism/op-node/rollup/sync"
 	"github.com/ethereum-optimism/optimism/op-service/eth"
@@ -375,6 +376,18 @@ func WithoutHonestProposer() Option {
 	}
 }
 
+// WithOpAggregator starts op-aggregator against the sequencer's op-reth, to prove its proof
+// aggregates: without it, the sequencer takes no transaction depending on a statement. Only the
+// single-chain super-root proofs presets support it.
+func WithOpAggregator() Option {
+	return option{
+		kinds: optionKindOpAggregator,
+		applyFn: func(cfg *sysgo.PresetConfig) {
+			cfg.StartOpAggregator = true
+		},
+	}
+}
+
 // WithoutHonestChallenger skips starting the honest challenger. Used by tests
 // that must prove the proposer alone drives resolution and bond claiming.
 func WithoutHonestChallenger() Option {
@@ -382,6 +395,25 @@ func WithoutHonestChallenger() Option {
 		kinds: optionKindSkipHonestChallenger,
 		applyFn: func(cfg *sysgo.PresetConfig) {
 			cfg.SkipHonestChallenger = true
+		},
+	}
+}
+
+// WithChallengerOptions configures the honest interop challenger of a super-root proofs preset,
+// applied after the preset's defaults. Cannon-kona settings have no effect when the preset plays
+// ZK games.
+func WithChallengerOptions(opts ...sharedchallenger.Option) Option {
+	var kinds optionKinds
+	for _, opt := range opts {
+		if opt != nil {
+			kinds = optionKindChallenger
+			break
+		}
+	}
+	return option{
+		kinds: kinds,
+		applyFn: func(cfg *sysgo.PresetConfig) {
+			cfg.ChallengerOptions = append(cfg.ChallengerOptions, opts...)
 		},
 	}
 }

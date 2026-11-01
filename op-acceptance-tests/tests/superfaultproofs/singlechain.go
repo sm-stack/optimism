@@ -1,6 +1,8 @@
 package superfaultproofs
 
 import (
+	"time"
+
 	sdmpkg "github.com/ethereum-optimism/optimism/op-chain-ops/pkg/sdm"
 	"github.com/ethereum-optimism/optimism/op-devstack/devtest"
 	"github.com/ethereum-optimism/optimism/op-devstack/dsl"
@@ -31,14 +33,42 @@ func singleChainFrom(sys *presets.SingleChainInterop) *chain {
 // The test stops the batcher, waits for the safe head to stall, then resumes batching and verifies
 // a basic set of valid/invalid transitions through the selected proof runners.
 func RunSingleChainSuperFaultProofSmokeTest(t devtest.T, sys *presets.SingleChainInterop, runners ...ProofRunner) {
-	runSingleChainSuperFaultProofSmokeTest(t, sys, prepareDefaultSingleChainTarget, runners...)
+	runSingleChainSuperFaultProofSmokeTest(t, sys, prepareDefaultSingleChainTarget, dsl.ValidatedTimeout, runners...)
 }
 
 // RunSingleChainSuperFaultProofSDMSmokeTest verifies the same single-chain super-root transition
 // while the disputed block contains an SDM PostExec tx. This proves kona-host super --native can
 // derive interop batches whose L2 payload includes SDM's synthetic post-exec transaction.
 func RunSingleChainSuperFaultProofSDMSmokeTest(t devtest.T, sys *presets.SingleChainInterop, runners ...ProofRunner) {
-	runSingleChainSuperFaultProofSmokeTest(t, sys, prepareSDMSingleChainTarget, runners...)
+	runSingleChainSuperFaultProofSmokeTest(t, sys, prepareSDMSingleChainTarget, dsl.ValidatedTimeout, runners...)
+}
+
+// RunSingleChainSuperFaultProofSmokeTestAt runs the single-chain smoke test with the disputed
+// block chosen by prepareTarget, which produces it on the stalled chain and returns its number.
+// Tests outside this package use it to prove blocks carrying their own transaction types.
+func RunSingleChainSuperFaultProofSmokeTestAt(
+	t devtest.T,
+	sys *presets.SingleChainInterop,
+	prepareTarget func(t devtest.T, sys *presets.SingleChainInterop) uint64,
+	runners ...ProofRunner,
+) {
+	RunSingleChainSuperFaultProofSmokeTestAtWithin(t, sys, prepareTarget, dsl.ValidatedTimeout, runners...)
+}
+
+// RunSingleChainSuperFaultProofSmokeTestAtWithin is RunSingleChainSuperFaultProofSmokeTestAt for a
+// disputed block that takes derivation up to validated to decide once batching resumes.
+func RunSingleChainSuperFaultProofSmokeTestAtWithin(
+	t devtest.T,
+	sys *presets.SingleChainInterop,
+	prepareTarget func(t devtest.T, sys *presets.SingleChainInterop) uint64,
+	validated time.Duration,
+	runners ...ProofRunner,
+) {
+	runSingleChainSuperFaultProofSmokeTest(t, sys, func(t devtest.T, sys *presets.SingleChainInterop, c *chain, _ []*chain) (uint64, uint64, uint64) {
+		targetBlock := prepareTarget(t, sys)
+		endTimestamp := c.Cfg.TimestampForBlock(targetBlock)
+		return endTimestamp - 1, endTimestamp, targetBlock
+	}, validated, runners...)
 }
 
 type singleChainTargetFn func(t devtest.T, sys *presets.SingleChainInterop, c *chain, chains []*chain) (startTimestamp uint64, endTimestamp uint64, targetBlock uint64)
@@ -47,6 +77,7 @@ func runSingleChainSuperFaultProofSmokeTest(
 	t devtest.T,
 	sys *presets.SingleChainInterop,
 	prepareTarget singleChainTargetFn,
+	validated time.Duration,
 	runners ...ProofRunner,
 ) {
 	t.Require().NotNil(sys.SuperRoots, "supernode is required for this test")
@@ -65,7 +96,7 @@ func runSingleChainSuperFaultProofSmokeTest(
 
 	// Resume batching and wait for the safe head to reach the target.
 	c.Batcher.Start()
-	sys.SuperRoots.AwaitValidatedTimestamp(endTimestamp)
+	sys.SuperRoots.AwaitValidatedTimestampWithin(endTimestamp, validated)
 	c.EL.Reached(eth.Safe, target, 60)
 	l1HeadCurrent := sys.L1EL.BlockRefByLabel(eth.Unsafe).ID()
 
