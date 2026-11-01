@@ -50,6 +50,19 @@
       ],
       "runner_profile": "large"
     },
+    "op-aggregator": {
+      "config": "melange/op-aggregator.yaml",
+      "source": {
+        "repository": "ethereum-optimism/optimism",
+        "path": "."
+      },
+      "source_submodules": "recursive",
+      "use_gha_cache": true,
+      "cache_key_files": [
+        "rust/Cargo.lock"
+      ],
+      "runner_profile": "large"
+    },
     "kona-zkvm-canary": {
       "config": "melange/kona-zkvm-canary.yaml",
       "source": {
@@ -330,6 +343,20 @@
         "apko/kona-zkvm-canary.yaml"
       ],
       "smoke_test": "kona-zkvm-canary --version"
+    },
+    "op-aggregator": {
+      "type": "rust",
+      "needs_melange": [
+        "op-aggregator"
+      ],
+      "paths": [
+        "rust/**",
+        "melange/op-aggregator.yaml"
+      ],
+      "nexus_paths": [
+        "apko/op-aggregator.yaml"
+      ],
+      "smoke_test": "op-aggregator --version"
     },
     "lokahi": {
       "type": "rust",

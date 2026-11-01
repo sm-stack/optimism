@@ -1,0 +1,76 @@
+# op-aggregator builds in its own melange stack rather than as an op-stack-rust
+# subpackage. leanVM picks its kernels when it is compiled, and proves about six
+# times faster with carry-less vector multiplication, so op-aggregator is built
+# for CPUs that have it: x86-64 Intel Ice Lake or AMD Zen 4 and later
+# (VPCLMULQDQ, GFNI), or ARMv8 with the AES and SHA-3 extensions (Graviton 3 and
+# later). The binary checks this CPU at startup instead of ending in an illegal
+# instruction. The other Rust binaries stay portable, and these flags change
+# every crate's build, so as a subpackage it would share nothing with the main
+# build yet run after it; as its own stack it builds in parallel on its own
+# runner and GHA cache.
+package:
+  name: op-aggregator
+  version: "0.0.0"
+  epoch: 0
+  description: op-aggregator — proves an OP Stack sequencer's proof aggregates
+  copyright:
+    - license: MIT
+
+environment:
+  contents:
+    keyring:
+      - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+    repositories:
+      - https://packages.wolfi.dev/os
+    packages:
+      - busybox
+      - ca-certificates-bundle
+      - build-base
+      - cargo-auditable
+      - rust
+      - openssl-dev
+      - perl
+      - protobuf-dev
+      - clang-19
+      - libclang-cpp-19
+      # opt-in mold linking, as in melange/pipelines/cargo/build.
+      - mold
+  environment:
+    # See melange/op-stack-rust.yaml: the workflow selects
+    # MELANGE_CARGO_PROFILE, and GHA cache restores melange-cache/ first.
+    CARGO_HOME: /var/cache/melange/cargo
+    CARGO_TARGET_DIR: /var/cache/melange/target
+
+pipeline:
+  # melange/pipelines/cargo/build takes one rustflags for every arch: build here
+  # instead, with the arch's kernel flags.
+  - runs: |
+      set -e
+      profile="${MELANGE_CARGO_PROFILE:-release}"
+      case "${{build.arch}}" in
+        x86_64)
+          rustflags="-C target-cpu=x86-64-v3 -C target-feature=+vpclmulqdq,+pclmulqdq,+gfni,+aes"
+          ;;
+        aarch64)
+          rustflags="-C target-feature=+aes,+sha3"
+          ;;
+        *)
+          echo "op-aggregator: no kernel flags for ${{build.arch}}" >&2
+          exit 1
+          ;;
+      esac
+      export CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-/var/cache/melange/target}/rust"
+      mkdir -p "$CARGO_HOME" "$CARGO_TARGET_DIR"
+      run_wrap=""
+      if command -v mold >/dev/null 2>&1; then
+        run_wrap="mold -run"
+      fi
+      cd rust
+      RUSTFLAGS="$rustflags" $run_wrap cargo auditable build --locked \
+        --profile "$profile" --package op-aggregator --bin op-aggregator
+      install -Dm755 \
+        "${CARGO_TARGET_DIR}/${profile}/op-aggregator" \
+        "${{targets.contextdir}}/usr/local/bin/op-aggregator"
+  - uses: strip
+    with:
+      opts: -g --remove-section=.note.package

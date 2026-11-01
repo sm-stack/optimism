@@ -1,0 +1,37 @@
+[package]
+name = "op-aggregator"
+description = "Proves the sequencer's proof aggregates: folds the statement sources of sealed blocks into leanVM tree roots"
+version = "0.1.0"
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+publish = false
+
+[lints]
+workspace = true
+
+[dependencies]
+alloy-primitives.workspace = true
+alloy-serde.workspace = true
+async-trait.workspace = true
+clap = { workspace = true, features = ["derive", "env"] }
+eyre.workspace = true
+jsonrpsee = { workspace = true, features = ["client", "http-client", "server", "macros"] }
+op-alloy-consensus = { workspace = true, features = ["std", "serde"] }
+op-leanvm-tree = { workspace = true, features = ["sequencer"] }
+reth-rpc-layer.workspace = true
+serde = { workspace = true, features = ["derive"] }
+serde_json.workspace = true
+thiserror.workspace = true
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "time"] }
+tower.workspace = true
+tracing.workspace = true
+tracing-subscriber = { workspace = true, features = ["env-filter", "fmt", "json"] }
+
+[target.'cfg(unix)'.dependencies]
+tikv-jemallocator.workspace = true
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["test-util"] }

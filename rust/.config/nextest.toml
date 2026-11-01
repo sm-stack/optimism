@@ -24,6 +24,13 @@ slow-timeout = { period = "1m", terminate-after = 10 }
 filter = "test(eest_fixtures)"
 slow-timeout = { period = "2m", terminate-after = 10 }
 
+# op-aggregator's folder tests prove signature leaves and seal tree roots, each on every core
+# (leanVM sizes its own thread pool): run together they starve one another past the slow-timeout.
+# Each takes a share of the test threads instead.
+[[profile.default.overrides]]
+filter = "package(op-aggregator) & test(/^folder::tests::/)"
+threads-required = 4
+
 # E2E tests using the testsuite framework from crates/e2e-test-utils.
 [[profile.default.overrides]]
 filter = "binary(e2e_testsuite)"

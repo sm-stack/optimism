@@ -861,15 +861,18 @@ jobs:
       - image: <<pipeline.parameters.c-rust_base_image>>
     resource_class: xlarge.gen2
     steps:
+      # op-aggregator proves the sequencer's proof aggregates: every op-reth sequencer with proof
+      # aggregation in the acceptance tests runs one.
       - rust-build:
           directory: rust
           profile: release
-          package: "op-reth"
+          package: "op-reth op-aggregator"
           save_cache: false
       - persist_to_workspace:
           root: "."
           paths:
             - "rust/target/release/op-reth"
+            - "rust/target/release/op-aggregator"
 
   initialize:
     docker:
@@ -2066,12 +2069,14 @@ jobs:
             echo "export RUST_BINARY_PATH_KONA_NODE=$ROOT_DIR/rust/target/release/kona-node" >> "$BASH_ENV"
             echo "export RUST_BINARY_PATH_OP_ZK_PROPOSER=$ROOT_DIR/rust/target/release/op-zk-proposer" >> "$BASH_ENV"
             echo "export RUST_BINARY_PATH_OP_RETH=$ROOT_DIR/rust/target/release/op-reth" >> "$BASH_ENV"
+            echo "export RUST_BINARY_PATH_OP_AGGREGATOR=$ROOT_DIR/rust/target/release/op-aggregator" >> "$BASH_ENV"
             echo "export RUST_BINARY_PATH_KONA_SP1_SUPER_RANGE_EXECUTOR=$BIN_DIR/kona-sp1-super-range-executor" >> "$BASH_ENV"
 
             # Fail here in seconds rather than ~25 minutes into the test run: a drift in the
             # persist path or the build profile would otherwise surface as an opaque devstack
             # error when a test first tries to launch one of these.
             test -x "$ROOT_DIR/rust/target/release/op-reth"
+            test -x "$ROOT_DIR/rust/target/release/op-aggregator"
             # KONA_SP1_ELF_DIR deliberately not set: acceptance tests run with
             # stub prestate artifacts (the devstack deploys the mock verifier,
             # so nothing consumes real ELF bytes until the proving path). This
@@ -2097,7 +2102,8 @@ jobs:
             if [ -n "<<parameters.acceptance_test_jobs>>" ]; then
               export ACCEPTANCE_TEST_JOBS="<<parameters.acceptance_test_jobs>>"
             fi
-            LOG_LEVEL=info just acceptance-test
+            # proofaggregation waits out derivation's 100 L1 block window in two tests.
+            ACCEPTANCE_TEST_TIMEOUT=60m LOG_LEVEL=info just acceptance-test
       - run:
           name: Print results (summary)
           working_directory: op-acceptance-tests
