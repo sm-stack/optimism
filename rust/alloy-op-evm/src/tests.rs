@@ -173,6 +173,7 @@ fn transact_raw_rejects_mainnet_chain_id_on_other_chain() {
         base: TxEnv { gas_limit: 100_000, ..Default::default() },
         enveloped_tx: Some(Bytes::new()),
         deposit: Default::default(),
+        aa: None,
     });
     assert_eq!(stale_chain_id_tx.chain_id(), Some(1));
 
@@ -321,6 +322,7 @@ fn deposit_above_tx_gas_limit_cap_receives_the_full_gas_limit() {
             None,
             false,
         ),
+        aa: None,
     });
 
     let result = evm.transact_raw(deposit).expect("a deposit must not be rejected");
@@ -549,4 +551,71 @@ fn test_precompiles_jovian() {
     });
 
     assert!(result.is_ok());
+}
+
+/// Runtime that stores `getTransactionPayer()` of the Transaction Context precompile at slot 0.
+fn store_tx_payer_runtime() -> Bytes {
+    let mut code = vec![0x63, 0x69, 0x0b, 0x3a, 0x9d, 0x60, 0xe0, 0x1b, 0x60, 0x00, 0x52];
+    // STATICCALL(gas, TX_CONTEXT, 0, 4, 0, 32); POP
+    code.extend_from_slice(&[0x60, 0x20, 0x60, 0x00, 0x60, 0x04, 0x60, 0x00, 0x73]);
+    code.extend_from_slice(TX_CONTEXT_ADDRESS.as_slice());
+    code.extend_from_slice(&[0x5a, 0xfa, 0x50]);
+    // SSTORE(0, MLOAD(0)); STOP
+    code.extend_from_slice(&[0x60, 0x00, 0x51, 0x60, 0x00, 0x55, 0x00]);
+    code.into()
+}
+
+fn payer_reader_db(sender: Address, reader: Address) -> InMemoryDB {
+    let mut db = InMemoryDB::default();
+    db.insert_account_info(
+        sender,
+        AccountInfo { balance: U256::from(1_000_000_000_000_000u64), ..Default::default() },
+    );
+    db.insert_account_info(
+        reader,
+        AccountInfo::default()
+            .with_code(revm::bytecode::Bytecode::new_raw(store_tx_payer_runtime())),
+    );
+    db
+}
+
+/// The factory's precompile map serves the Transaction Context precompile from Lagoon, and an
+/// EIP-8430 transaction's receipt records its committed phases.
+#[test]
+fn eip8430_tx_reads_its_payer_through_the_precompile_map() {
+    use op_alloy::consensus::{AaCall, TxEip8430};
+    let sender = Address::repeat_byte(0x51);
+    let reader = Address::repeat_byte(0xc0);
+    let mut evm = lagoon_test_evm_on_chain_901(payer_reader_db(sender, reader));
+
+    let tx = TxEip8430 {
+        chain_id: 901,
+        max_fee_per_gas: 1,
+        gas_limit: 200_000,
+        calls: vec![vec![AaCall { to: reader, value: U256::ZERO, data: Bytes::new() }]],
+        // The EVM takes the sender as recovered; only the shape of its authorization is checked.
+        sender_auth: Bytes::from(vec![0x11; 65]),
+        ..Default::default()
+    };
+    let result = evm.transact(OpTx::from_recovered_tx(&tx, sender)).expect("valid transaction");
+
+    let stored = result.state[&reader].storage[&U256::ZERO].present_value;
+    assert_eq!(stored, U256::from_be_slice(sender.as_slice()));
+    let receipt = block::receipt_builder::aa_receipt(result.result, 0);
+    assert!(receipt.inner.status.coerce_status());
+    assert_eq!(receipt.committed_phases, 1);
+}
+
+/// For other transaction types the precompile reports `tx.origin`.
+#[test]
+fn legacy_tx_reads_its_origin_as_payer() {
+    let sender = Address::repeat_byte(0x51);
+    let reader = Address::repeat_byte(0xc0);
+    let mut evm = lagoon_test_evm_on_chain_901(payer_reader_db(sender, reader));
+
+    let result = evm.transact(legacy_op_tx(0, sender, reader, 200_000)).expect("valid transaction");
+
+    assert!(result.result.is_success(), "{:?}", result.result);
+    let stored = result.state[&reader].storage[&U256::ZERO].present_value;
+    assert_eq!(stored, U256::from_be_slice(sender.as_slice()));
 }

@@ -10,6 +10,7 @@ use crate::{
     },
     transaction::{OpTxTr, estimate_tx_compressed_size},
 };
+use op_alloy_consensus::DEPENDENCY_DA_SIZE;
 use revm::{
     context_interface::cfg::gas::{NON_ZERO_BYTE_MULTIPLIER_ISTANBUL, STANDARD_TOKEN_COST},
     database_interface::Database,
@@ -313,6 +314,31 @@ impl L1BlockInfo {
         tx_l1_cost
     }
 
+    /// The bytes an EIP-8430 transaction's `dependencies` are charged for, scaled by 1e6 like
+    /// [`Self::tx_estimated_size_fjord`].
+    fn dependency_size_scaled(dependencies: u64) -> U256 {
+        U256::from(dependencies)
+            .saturating_mul(U256::from(DEPENDENCY_DA_SIZE))
+            .saturating_mul(U256::from(1_000_000))
+    }
+
+    /// The L1 data gas of an EIP-8430 transaction's `dependencies`, as [`Self::data_gas`] counts a
+    /// transaction's estimated size.
+    pub fn dependency_data_gas(dependencies: u64) -> U256 {
+        Self::dependency_size_scaled(dependencies)
+            .saturating_mul(U256::from(NON_ZERO_BYTE_COST))
+            .wrapping_div(U256::from(1_000_000))
+    }
+
+    /// The L1 data fee of an EIP-8430 transaction's `dependencies`, on top of its own bytes':
+    /// [`DEPENDENCY_DA_SIZE`] bytes each, priced as the Fjord L1 cost prices a transaction's
+    /// estimated size.
+    pub fn dependency_l1_cost(&self, dependencies: u64) -> U256 {
+        Self::dependency_size_scaled(dependencies)
+            .saturating_mul(self.calculate_l1_fee_scaled_ecotone())
+            .wrapping_div(U256::from(1_000_000_000_000u64))
+    }
+
     /// Calculate the gas cost of a transaction based on L1 block data posted on L2, pre-Ecotone.
     fn calculate_tx_l1_cost_bedrock(&self, input: &[u8], spec_id: OpSpecId) -> U256 {
         let rollup_data_gas_cost = self.data_gas(input, spec_id);
@@ -603,6 +629,26 @@ mod tests {
         let input = bytes!("7EFACADE");
         let gas_cost = l1_block_info.calculate_tx_l1_cost(&input, OpSpecId::FJORD);
         assert_eq!(gas_cost, U256::ZERO);
+    }
+
+    /// A dependency's bytes cost what a transaction's do: a short transaction pays for
+    /// the minimum estimated size, 100 bytes.
+    #[test]
+    fn dependency_bytes_cost_what_transaction_bytes_cost() {
+        let mut l1_block_info = L1BlockInfo {
+            l1_base_fee: U256::from(1_055_991_687),
+            l1_base_fee_scalar: U256::from(5_227),
+            l1_blob_base_fee: Some(U256::from(1)),
+            l1_blob_base_fee_scalar: Some(U256::from(1_014_213)),
+            ..Default::default()
+        };
+        let minimum_tx = l1_block_info.calculate_tx_l1_cost(&[0x02; 10], OpSpecId::FJORD);
+        let dependencies = l1_block_info.dependency_l1_cost(25);
+        assert_eq!(dependencies / minimum_tx, U256::from(25 * DEPENDENCY_DA_SIZE / 100));
+        assert_eq!(
+            L1BlockInfo::dependency_data_gas(25),
+            U256::from(25) * U256::from(DEPENDENCY_DA_SIZE) * U256::from(NON_ZERO_BYTE_COST)
+        );
     }
 
     #[test]

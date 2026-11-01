@@ -49,7 +49,81 @@ pub enum OpTransactionError {
     /// Non-deposit transactions on Optimism must have `enveloped_tx` field set
     /// to properly calculate L1 costs.
     MissingEnvelopedTx,
+    /// An invalid [EIP-8430] transaction.
+    ///
+    /// [EIP-8430]: https://github.com/ethereum/EIPs/pull/12385
+    AaTx(AaTxInvalid),
 }
+
+/// Why an [EIP-8430] transaction cannot be included.
+///
+/// [EIP-8430]: https://github.com/ethereum/EIPs/pull/12385
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub enum AaTxInvalid {
+    /// Lagoon is not active.
+    NotActive,
+    /// The transaction environment carries no transaction.
+    MissingTransaction,
+    /// The transaction breaks a rule that needs no state.
+    Static(op_alloy_consensus::AaTxError),
+    /// The caller is not the named sender.
+    WrongSender,
+    /// The block is outside the validity window.
+    OutsideValidityWindow,
+    /// The payer's authentication reserves more than
+    /// [`op_alloy_consensus::MAX_AUTHENTICATION_GAS`].
+    PayerAuthenticationGas,
+    /// The payer signature does not recover.
+    PayerSignature,
+    /// The delegation entry would replace code that is not a delegation.
+    DelegationOverCode,
+    /// The sender signature does not recover.
+    SenderSignature,
+    /// The sender did not configure the actor that authorized it, or revoked it.
+    SenderActor,
+    /// The payer did not configure the actor that authorized it, or revoked it.
+    PayerActor,
+    /// The actor that authorized the sender or the payer expired.
+    ActorExpired,
+    /// The sender's actor may not initiate transactions.
+    SenderScope,
+    /// The sender's actor may only call its policy manager, without value.
+    Policy,
+    /// The payer's actor may not pay for this transaction.
+    PayerScope,
+    /// Only the sender's admin secp256k1 key may delegate its code.
+    DelegationNeedsAdmin,
+}
+
+impl Display for AaTxInvalid {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::NotActive => write!(f, "EIP-8430 transactions are not active"),
+            Self::MissingTransaction => write!(f, "EIP-8430 environment without its transaction"),
+            Self::Static(error) => write!(f, "invalid EIP-8430 transaction: {error}"),
+            Self::WrongSender => write!(f, "the caller is not the named sender"),
+            Self::OutsideValidityWindow => write!(f, "the block is outside the validity window"),
+            Self::PayerAuthenticationGas => {
+                write!(f, "the payer authentication reserves too much gas")
+            }
+            Self::PayerSignature => write!(f, "invalid payer signature"),
+            Self::DelegationOverCode => write!(f, "delegation over non-delegation code"),
+            Self::SenderSignature => write!(f, "invalid sender signature"),
+            Self::SenderActor => write!(f, "the sender's actor is not configured"),
+            Self::PayerActor => write!(f, "the payer's actor is not configured"),
+            Self::ActorExpired => write!(f, "the authorizing actor expired"),
+            Self::SenderScope => write!(f, "the sender's actor may not initiate transactions"),
+            Self::Policy => write!(f, "the sender's actor may only call its policy manager"),
+            Self::PayerScope => write!(f, "the payer's actor may not pay for this transaction"),
+            Self::DelegationNeedsAdmin => {
+                write!(f, "only the sender's admin secp256k1 key may delegate")
+            }
+        }
+    }
+}
+
+impl core::error::Error for AaTxInvalid {}
 
 impl TransactionError for OpTransactionError {}
 
@@ -69,6 +143,7 @@ impl Display for OpTransactionError {
             Self::MissingEnvelopedTx => {
                 write!(f, "missing enveloped transaction bytes for non-deposit transaction")
             }
+            Self::AaTx(reason) => reason.fmt(f),
         }
     }
 }

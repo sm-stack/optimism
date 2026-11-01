@@ -5,7 +5,7 @@ use crate::{
     constants::{BASE_FEE_RECIPIENT, L1_FEE_RECIPIENT, OPERATOR_FEE_RECIPIENT},
     transaction::{OpTransactionError, OpTxTr, deposit::DEPOSIT_TRANSACTION_TYPE},
 };
-use op_alloy_consensus::OpTxType;
+use op_alloy_consensus::{AA_TX_TYPE_ID, OpTxType};
 use revm::{
     context::{
         LocalContextTr,
@@ -79,6 +79,23 @@ where
     type Evm = EVM;
     type Error = ERROR;
     type HaltReason = OpHaltReason;
+
+    /// UPSTREAM-MIRROR(override): revm-handler@43.0.2 `revm_handler::Handler::run`
+    ///
+    /// EIP-8430 transactions take their own path ([`OpHandler::run_aa_tx`]); everything else
+    /// runs the upstream default.
+    fn run(
+        &mut self,
+        evm: &mut Self::Evm,
+    ) -> Result<ExecutionResult<Self::HaltReason>, Self::Error> {
+        if evm.ctx().tx().tx_type() == AA_TX_TYPE_ID {
+            return self.run_aa_tx(evm, |handler, evm, init| handler.run_exec_loop(evm, init));
+        }
+        match self.run_without_catch_error(evm) {
+            Ok(output) => Ok(output),
+            Err(error) => self.catch_error(evm, error),
+        }
+    }
 
     /// UPSTREAM-MIRROR(override): revm-handler@43.0.2 `revm_handler::Handler::validate_env`
     ///
@@ -483,7 +500,8 @@ where
             OpTxType::Eip2930 |
             OpTxType::Eip1559 |
             OpTxType::Eip7702 |
-            OpTxType::PostExec => self.discard_and_surface_error(evm, error),
+            OpTxType::PostExec |
+            OpTxType::Aa => self.discard_and_surface_error(evm, error),
         }
     }
 
@@ -557,6 +575,24 @@ where
     ERROR: EvmTrError<EVM> + From<OpTransactionError> + FromStringError + IsTxError,
 {
     type IT = EthInterpreter;
+
+    /// UPSTREAM-MIRROR(override): revm-inspector@43.0.2
+    /// `revm_inspector::InspectorHandler::inspect_run`
+    ///
+    /// EIP-8430 transactions take their own path with an inspected call loop.
+    fn inspect_run(
+        &mut self,
+        evm: &mut Self::Evm,
+    ) -> Result<ExecutionResult<Self::HaltReason>, Self::Error> {
+        if evm.ctx().tx().tx_type() == AA_TX_TYPE_ID {
+            return self
+                .run_aa_tx(evm, |handler, evm, init| handler.inspect_run_exec_loop(evm, init));
+        }
+        match self.inspect_run_without_catch_error(evm) {
+            Ok(output) => Ok(output),
+            Err(error) => self.catch_error(evm, error),
+        }
+    }
 }
 
 #[cfg(test)]
@@ -1600,6 +1636,7 @@ mod tests {
             base: TxEnv::builder().build_fill(),
             enveloped_tx: None, // Missing enveloped_tx for non-deposit transaction
             deposit: DepositTransactionParts::default(), // No source_hash means non-deposit
+            aa: None,
         });
 
         let mut evm = ctx.build_op();

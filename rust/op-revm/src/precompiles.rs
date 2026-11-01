@@ -1,5 +1,5 @@
 //! Contains Optimism specific precompiles.
-use crate::OpSpecId;
+use crate::{OpSpecId, aa::context as tx_context};
 use revm::{
     context::Cfg,
     context_interface::ContextTr,
@@ -35,7 +35,8 @@ impl OpPrecompiles {
             OpSpecId::GRANITE | OpSpecId::HOLOCENE => granite(),
             OpSpecId::ISTHMUS => isthmus(),
             OpSpecId::JOVIAN => jovian(),
-            OpSpecId::KARST | OpSpecId::LAGOON => karst(),
+            OpSpecId::KARST => karst(),
+            OpSpecId::LAGOON => lagoon(),
         };
 
         Self { inner: EthPrecompiles { precompiles, spec: SpecId::default() }, spec }
@@ -117,6 +118,18 @@ pub fn karst() -> &'static Precompiles {
     })
 }
 
+/// Lagoon adds the Transaction Context precompile ([EIP-8430]) to the Karst set.
+///
+/// [EIP-8430]: https://github.com/ethereum/EIPs/pull/12385
+pub fn lagoon() -> &'static Precompiles {
+    static INSTANCE: OnceLock<Precompiles> = OnceLock::new();
+    INSTANCE.get_or_init(|| {
+        let mut precompiles = karst().clone();
+        precompiles.extend([tx_context::TX_CONTEXT]);
+        precompiles
+    })
+}
+
 /// UPSTREAM-MIRROR(set): revm-precompile@43.0.2 `revm_precompile::Precompiles`
 ///
 /// Jovian replaces variable-input precompiles in the inherited set.
@@ -169,6 +182,9 @@ where
         context: &mut CTX,
         inputs: &CallInputs,
     ) -> Result<Option<Self::Output>, String> {
+        if let Some(result) = tx_context::intercept(self.spec, context, inputs) {
+            return Ok(Some(result));
+        }
         self.inner.run(context, inputs)
     }
 

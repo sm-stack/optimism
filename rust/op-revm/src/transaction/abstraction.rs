@@ -1,6 +1,7 @@
 //! Optimism transaction abstraction containing the `[OpTxTr]` trait and corresponding
 //! `[OpTransaction]` type.
 use super::deposit::{DEPOSIT_TRANSACTION_TYPE, DepositTransactionParts};
+use crate::aa::AaTxEnv;
 use auto_impl::auto_impl;
 use revm::{
     context::{
@@ -11,7 +12,7 @@ use revm::{
     handler::SystemCallTx,
     primitives::{Address, B256, Bytes, TxKind, U256},
 };
-use std::vec;
+use std::{sync::Arc, vec};
 
 /// Optimism Transaction trait.
 #[auto_impl(&, &mut, Box, Arc)]
@@ -27,6 +28,11 @@ pub trait OpTxTr: Transaction {
 
     /// Whether the transaction is a system transaction
     fn is_system_transaction(&self) -> bool;
+
+    /// The EIP-8430 transaction, if this is one.
+    fn aa_tx(&self) -> Option<&Arc<AaTxEnv>> {
+        None
+    }
 
     /// Returns `true` if transaction is of type [`DEPOSIT_TRANSACTION_TYPE`].
     fn is_deposit(&self) -> bool {
@@ -48,6 +54,8 @@ pub struct OpTransaction<T: Transaction> {
     pub enveloped_tx: Option<Bytes>,
     /// Deposit transaction parts.
     pub deposit: DepositTransactionParts,
+    /// The EIP-8430 transaction, for type `0x79`.
+    pub aa: Option<Arc<AaTxEnv>>,
 }
 
 impl<T: Transaction> AsRef<T> for OpTransaction<T> {
@@ -59,7 +67,7 @@ impl<T: Transaction> AsRef<T> for OpTransaction<T> {
 impl<T: Transaction> OpTransaction<T> {
     /// Create a new Optimism transaction.
     pub fn new(base: T) -> Self {
-        Self { base, enveloped_tx: None, deposit: DepositTransactionParts::default() }
+        Self { base, enveloped_tx: None, deposit: DepositTransactionParts::default(), aa: None }
     }
 }
 
@@ -76,6 +84,7 @@ impl Default for OpTransaction<TxEnv> {
             base: TxEnv::default(),
             enveloped_tx: Some(vec![0x00].into()),
             deposit: DepositTransactionParts::default(),
+            aa: None,
         }
     }
 }
@@ -211,6 +220,10 @@ impl<T: Transaction> OpTxTr for OpTransaction<T> {
     fn is_system_transaction(&self) -> bool {
         self.deposit.is_system_transaction
     }
+
+    fn aa_tx(&self) -> Option<&Arc<AaTxEnv>> {
+        self.aa.as_ref()
+    }
 }
 
 /// Builder for constructing [`OpTransaction`] instances
@@ -309,7 +322,7 @@ impl OpTransactionBuilder {
 
         let base = self.base.build_fill();
 
-        OpTransaction { base, enveloped_tx: self.enveloped_tx, deposit: self.deposit }
+        OpTransaction { base, enveloped_tx: self.enveloped_tx, deposit: self.deposit, aa: None }
     }
 
     /// Build the [`OpTransaction`] instance, return error if the transaction is not valid.
@@ -335,7 +348,7 @@ impl OpTransactionBuilder {
 
         let base = self.base.build()?;
 
-        Ok(OpTransaction { base, enveloped_tx: self.enveloped_tx, deposit: self.deposit })
+        Ok(OpTransaction { base, enveloped_tx: self.enveloped_tx, deposit: self.deposit, aa: None })
     }
 }
 

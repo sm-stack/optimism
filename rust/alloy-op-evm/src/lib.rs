@@ -19,16 +19,20 @@ pub use env::{
 pub mod error;
 pub use error::{OpTxError, map_op_err};
 
-use alloy_evm::{Database, Evm, EvmEnv, EvmFactory, IntoTxEnv, precompiles::PrecompilesMap};
+use alloy_evm::{
+    Database, Evm, EvmEnv, EvmFactory, IntoTxEnv,
+    precompiles::{DynPrecompile, PrecompilesMap},
+};
 use alloy_primitives::{Address, Bytes};
 use core::{
     fmt::Debug,
     marker::PhantomData,
     ops::{Deref, DerefMut},
 };
-use op_alloy::consensus::POST_EXEC_TX_TYPE_ID;
+use op_alloy::consensus::{POST_EXEC_TX_TYPE_ID, TX_CONTEXT_ADDRESS};
 use op_revm::{
     L1BlockInfo, OpBuilder, OpHaltReason, OpSpecId, OpTransaction,
+    aa::context as tx_context,
     constants::{BASE_FEE_RECIPIENT, L1_FEE_RECIPIENT, OPERATOR_FEE_RECIPIENT},
     precompiles::OpPrecompiles,
 };
@@ -53,6 +57,35 @@ pub use block::{
 };
 
 pub mod post_exec;
+
+/// The OP precompiles of `spec` as a [`PrecompilesMap`], the Transaction Context precompile
+/// included from Lagoon.
+pub fn op_precompiles(spec: OpSpecId) -> PrecompilesMap {
+    let mut precompiles =
+        PrecompilesMap::from_static(OpPrecompiles::new_with_spec(spec).precompiles());
+    if spec.is_enabled_in(OpSpecId::LAGOON) {
+        precompiles.apply_precompile(&TX_CONTEXT_ADDRESS, |_| Some(tx_context_precompile()));
+    }
+    precompiles
+}
+
+/// The Transaction Context precompile ([EIP-8430]), reading what the executing transaction
+/// published.
+///
+/// [EIP-8430]: https://github.com/ethereum/EIPs/pull/12385
+pub fn tx_context_precompile() -> DynPrecompile {
+    DynPrecompile::new_stateful(tx_context::TX_CONTEXT.id().clone(), |mut input| {
+        let call = tx_context::ContextCall {
+            input: input.data,
+            gas_limit: input.gas,
+            reservoir: input.reservoir,
+            with_value: !input.value.is_zero(),
+            direct: input.is_direct_call(),
+            origin: input.internals.tx_env().caller(),
+        };
+        Ok(tx_context::run(call, |slot| input.internals.tload(TX_CONTEXT_ADDRESS, slot)))
+    })
+}
 
 /// The OP EVM context type.
 pub type OpEvmContext<DB> = Context<BlockEnv, OpTx, CfgEnv<OpSpecId>, DB, Journal<DB>, L1BlockInfo>;
@@ -200,9 +233,7 @@ impl<DB: Database, I, Tx, R> OpEvm<DB, I, PrecompilesMap, Tx, R> {
                 inspector,
                 refund_policy,
             ))
-            .with_precompiles(PrecompilesMap::from_static(
-                OpPrecompiles::new_with_spec(spec_id).precompiles(),
-            ));
+            .with_precompiles(op_precompiles(spec_id));
 
         Self::from_inner(inner, inspect)
     }

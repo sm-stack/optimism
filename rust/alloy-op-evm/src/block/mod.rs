@@ -17,7 +17,7 @@ use alloy_op_hardforks::{OpChainHardforks, OpHardforks};
 use alloy_primitives::{Address, B256, Bytes, U256};
 use canyon::ensure_create2_deployer;
 use op_alloy::consensus::{
-    OpDepositReceipt, OpTransaction as OpConsensusTransaction, POST_EXEC_TX_TYPE_ID,
+    AA_TX_TYPE_ID, OpDepositReceipt, OpTransaction as OpConsensusTransaction, POST_EXEC_TX_TYPE_ID,
     PostExecPayload, SDMGasEntry,
 };
 use op_revm::{
@@ -1162,7 +1162,14 @@ where
         // operations must run before commit so commit_transaction stays infallible.
         Self::canonicalize_result_gas(&mut result.result, post_exec_refund);
         if let Some(deltas) = post_exec.as_ref() {
-            self.apply_post_exec_refund_to_state(&mut result.state, sender, deltas)?;
+            // The refund goes to whoever paid: an EIP-8430 transaction reports its resolved payer
+            // in its outcome.
+            let payer = if tx.tx().ty() == AA_TX_TYPE_ID {
+                receipt_builder::aa_outcome(&result.result).payer
+            } else {
+                sender
+            };
+            self.apply_post_exec_refund_to_state(&mut result.state, payer, deltas)?;
         }
 
         Ok(OpTxResult {

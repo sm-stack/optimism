@@ -5,7 +5,35 @@ use alloy_consensus::{Eip658Value, TransactionEnvelope, TxReceipt};
 use alloy_evm::{Evm, eth::receipt_builder::ReceiptBuilderCtx};
 use alloy_primitives::Log;
 use core::fmt::Debug;
-use op_alloy::consensus::{OpDepositReceipt, OpReceiptEnvelope, OpTxEnvelope, OpTxType};
+use op_alloy::consensus::{
+    OpAaReceipt, OpDepositReceipt, OpReceiptEnvelope, OpTxEnvelope, OpTxType,
+};
+use op_revm::aa::AaTxOutcome;
+use revm::context::result::ExecutionResult;
+
+/// The outcome an EIP-8430 transaction's execution result carries as its output.
+pub(crate) fn aa_outcome<H>(result: &ExecutionResult<H>) -> AaTxOutcome {
+    result
+        .output()
+        .and_then(|out| AaTxOutcome::decode(out))
+        .expect("an EIP-8430 transaction's execution succeeds with its outcome as output")
+}
+
+/// Builds an EIP-8430 transaction's receipt from its execution result.
+///
+/// The EVM returns whether every phase committed and how many did as the result's output
+/// ([`AaTxOutcome`]); the result's logs are the committed phases' logs.
+pub fn aa_receipt<H>(result: ExecutionResult<H>, cumulative_gas_used: u64) -> OpAaReceipt<Log> {
+    let outcome = aa_outcome(&result);
+    OpAaReceipt {
+        inner: alloy_consensus::Receipt {
+            status: Eip658Value::Eip658(outcome.success),
+            cumulative_gas_used,
+            logs: result.into_logs(),
+        },
+        committed_phases: outcome.committed_phases,
+    }
+}
 
 /// Type that knows how to build a receipt based on execution result.
 #[auto_impl::auto_impl(&, Arc)]
@@ -64,6 +92,11 @@ impl OpReceiptBuilder for OpAlloyReceiptBuilder {
     ) -> Result<Self::Receipt, ReceiptBuilderCtx<'a, OpTxType, E>> {
         match ctx.tx_type {
             OpTxType::Deposit => Err(ctx),
+            OpTxType::Aa => {
+                let receipt = aa_receipt(ctx.result, ctx.cumulative_gas_used);
+                let logs_bloom = receipt.inner.bloom_slow();
+                Ok(OpReceiptEnvelope::Aa(alloy_consensus::ReceiptWithBloom { receipt, logs_bloom }))
+            }
             ty => {
                 let receipt = alloy_consensus::Receipt {
                     status: Eip658Value::Eip658(ctx.result.is_success()),
@@ -78,7 +111,7 @@ impl OpReceiptBuilder for OpAlloyReceiptBuilder {
                     OpTxType::Eip1559 => OpReceiptEnvelope::Eip1559(receipt),
                     OpTxType::Eip7702 => OpReceiptEnvelope::Eip7702(receipt),
                     OpTxType::PostExec => OpReceiptEnvelope::PostExec(receipt),
-                    OpTxType::Deposit => unreachable!(),
+                    OpTxType::Deposit | OpTxType::Aa => unreachable!(),
                 })
             }
         }

@@ -8,8 +8,8 @@ use alloy_eips::{Encodable2718, Typed2718, eip7594::Encodable7594};
 use alloy_evm::{FromRecoveredTx, FromTxWithEncoded, IntoTxEnv, TransactionEnvMut};
 use alloy_primitives::{Address, B256, Bytes, TxKind, U256};
 use core::ops::{Deref, DerefMut};
-use op_alloy::consensus::{OpTxEnvelope, TxDeposit, TxPostExec};
-use op_revm::{OpTransaction, transaction::deposit::DepositTransactionParts};
+use op_alloy::consensus::{OpTxEnvelope, TxDeposit, TxEip8430, TxPostExec};
+use op_revm::{OpTransaction, aa::AaTxEnv, transaction::deposit::DepositTransactionParts};
 use revm::context::TxEnv;
 
 /// Helper to convert a deposit transaction into a [`TxEnv`].
@@ -40,6 +40,25 @@ pub fn post_exec_tx_env(tx: &TxPostExec, caller: Address) -> TxEnv {
         gas_limit: tx.gas_limit(),
         kind: tx.kind(),
         tx_type: tx.ty(),
+        ..Default::default()
+    }
+}
+
+/// Builds the [`TxEnv`] for an EIP-8430 transaction sent by `sender`.
+///
+/// The env carries the resolved sender as caller and target, the fee caps, the sequence as nonce,
+/// and the effective gas limit (`gas_limit` and the payer's reserve) as the gas limit the block
+/// reserves. The calls travel in [`OpTransaction::aa`].
+pub fn aa_tx_env(tx: &TxEip8430, sender: Address) -> TxEnv {
+    TxEnv {
+        tx_type: tx.ty(),
+        caller: sender,
+        gas_limit: tx.effective_gas_limit(),
+        gas_price: tx.max_fee_per_gas,
+        gas_priority_fee: Some(tx.max_priority_fee_per_gas),
+        kind: TxKind::Call(sender),
+        nonce: tx.nonce_sequence,
+        chain_id: Some(tx.chain_id),
         ..Default::default()
     }
 }
@@ -174,6 +193,10 @@ impl op_revm::transaction::OpTxTr for OpTx {
     fn is_system_transaction(&self) -> bool {
         self.0.is_system_transaction()
     }
+
+    fn aa_tx(&self) -> Option<&alloc::sync::Arc<AaTxEnv>> {
+        self.0.aa_tx()
+    }
 }
 
 impl FromRecoveredTx<OpTxEnvelope> for OpTx {
@@ -192,6 +215,7 @@ impl FromTxWithEncoded<OpTxEnvelope> for OpTx {
             OpTxEnvelope::Eip7702(tx) => Self::from_encoded_tx(tx, caller, encoded),
             OpTxEnvelope::Deposit(tx) => Self::from_encoded_tx(tx.inner(), caller, encoded),
             OpTxEnvelope::PostExec(tx) => Self::from_encoded_tx(tx.inner(), caller, encoded),
+            OpTxEnvelope::Aa(tx) => Self::from_encoded_tx(tx.inner(), caller, encoded),
         }
     }
 }
@@ -222,6 +246,7 @@ macro_rules! impl_from_tx {
                         base,
                         enveloped_tx: Some(encoded),
                         deposit: Default::default(),
+                        aa: None,
                     })
                 }
             }
@@ -252,7 +277,12 @@ impl<T> FromTxWithEncoded<Signed<TxEip4844Variant<T>>> for OpTx {
 impl<T> FromTxWithEncoded<TxEip4844Variant<T>> for OpTx {
     fn from_encoded_tx(tx: &TxEip4844Variant<T>, caller: Address, encoded: Bytes) -> Self {
         let base = TxEnv::from_recovered_tx(tx, caller);
-        Self(OpTransaction { base, enveloped_tx: Some(encoded), deposit: Default::default() })
+        Self(OpTransaction {
+            base,
+            enveloped_tx: Some(encoded),
+            deposit: Default::default(),
+            aa: None,
+        })
     }
 }
 
@@ -271,7 +301,7 @@ impl FromTxWithEncoded<TxDeposit> for OpTx {
             mint: Some(tx.mint),
             is_system_transaction: tx.is_system_transaction,
         };
-        Self(OpTransaction { base, enveloped_tx: Some(encoded), deposit })
+        Self(OpTransaction { base, enveloped_tx: Some(encoded), deposit, aa: None })
     }
 }
 
@@ -285,17 +315,60 @@ impl FromRecoveredTx<TxPostExec> for OpTx {
 impl FromTxWithEncoded<TxPostExec> for OpTx {
     fn from_encoded_tx(tx: &TxPostExec, caller: Address, encoded: Bytes) -> Self {
         let base = post_exec_tx_env(tx, caller);
-        Self(OpTransaction { base, enveloped_tx: Some(encoded), deposit: Default::default() })
+        Self(OpTransaction {
+            base,
+            enveloped_tx: Some(encoded),
+            deposit: Default::default(),
+            aa: None,
+        })
     }
 }
 
+impl FromRecoveredTx<TxEip8430> for OpTx {
+    fn from_recovered_tx(tx: &TxEip8430, sender: Address) -> Self {
+        let encoded = tx.encoded_2718();
+        Self::from_encoded_tx(tx, sender, encoded.into())
+    }
+}
+
+impl FromTxWithEncoded<TxEip8430> for OpTx {
+    fn from_encoded_tx(tx: &TxEip8430, caller: Address, encoded: Bytes) -> Self {
+        Self(OpTransaction {
+            base: aa_tx_env(tx, caller),
+            enveloped_tx: Some(encoded),
+            deposit: Default::default(),
+            aa: Some(alloc::sync::Arc::new(AaTxEnv::new(tx.clone()))),
+        })
+    }
+}
+
+impl OpTx {
+    /// Applies `change` to the EIP-8430 transaction, if this is one, keeping its dependencies and
+    /// the env's gas limit and nonce in step.
+    fn update_aa(&mut self, change: impl FnOnce(&mut TxEip8430)) {
+        if let Some(aa) = &mut self.0.aa {
+            let env = alloc::sync::Arc::make_mut(aa);
+            change(&mut env.tx);
+            env.dependencies = env.tx.dependencies();
+            self.0.base.gas_limit = env.tx.effective_gas_limit();
+            self.0.base.nonce = env.tx.nonce_sequence;
+        }
+    }
+}
+
+/// An EIP-8430 transaction's gas limit here is its effective gas limit, as the block reserves it:
+/// setting it sets `gas_limit` to what remains after the payer's reserve.
 impl TransactionEnvMut for OpTx {
+    /// The envelope bytes are not re-encoded: the RPC paths that change a simulation's gas or nonce
+    /// charge no fees, so no L1 cost is read from them.
     fn set_gas_limit(&mut self, gas_limit: u64) {
         self.0.base.gas_limit = gas_limit;
+        self.update_aa(|tx| tx.gas_limit = gas_limit.saturating_sub(tx.payer_gas_reserve()));
     }
 
     fn set_nonce(&mut self, nonce: u64) {
         self.0.base.nonce = nonce;
+        self.update_aa(|tx| tx.nonce_sequence = nonce);
     }
 
     fn set_access_list(&mut self, access_list: alloy_eips::eip2930::AccessList) {

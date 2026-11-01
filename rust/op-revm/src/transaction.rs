@@ -4,7 +4,7 @@ pub mod deposit;
 pub mod error;
 
 pub use abstraction::{OpTransaction, OpTxTr};
-pub use error::OpTransactionError;
+pub use error::{AaTxInvalid, OpTransactionError};
 
 use crate::fast_lz::flz_compress_len;
 use alloy_eips::Encodable2718;
