@@ -322,6 +322,23 @@ pub trait OpHardforks: EthereumHardforks {
     fn is_interop_active_at_timestamp(&self, timestamp: u64) -> bool {
         self.is_lagoon_active_at_timestamp(timestamp)
     }
+
+    /// Returns `true` if proof aggregation (proof aggregates proving transaction
+    /// dependencies) is active at the given block timestamp.
+    ///
+    /// The single activation gate for the feature. Currently tied to
+    /// [`Self::is_lagoon_active_at_timestamp`] until the feature has its own fork time.
+    fn is_proof_aggregation_active_at_timestamp(&self, timestamp: u64) -> bool {
+        self.is_lagoon_active_at_timestamp(timestamp)
+    }
+
+    /// Returns `true` if EIP-8430 transactions (type `0x79`) are active at the given block
+    /// timestamp.
+    ///
+    /// Tied to [`Self::is_lagoon_active_at_timestamp`], the fork at which op-revm executes them.
+    fn is_aa_tx_active_at_timestamp(&self, timestamp: u64) -> bool {
+        self.is_lagoon_active_at_timestamp(timestamp)
+    }
 }
 
 /// A type allowing to configure activation [`ForkCondition`]s for a given list of

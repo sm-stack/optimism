@@ -11,6 +11,9 @@ pub use deposit::{OpDepositReceipt, OpDepositReceiptWithBloom};
 pub(crate) mod receipt;
 pub use receipt::OpReceipt;
 
+pub(crate) mod aa;
+pub use aa::OpAaReceipt;
+
 /// Receipt is the result of a transaction execution.
 pub trait OpTxReceipt: TxReceipt {
     /// Returns the deposit nonce of the transaction.

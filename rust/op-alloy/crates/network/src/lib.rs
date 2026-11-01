@@ -46,6 +46,7 @@ impl NetworkTransactionBuilder<Optimism> for OpTransactionRequest {
         match ty {
             OpTxType::Deposit => Err(vec!["not implemented for deposit tx"]),
             OpTxType::PostExec => Err(vec!["not implemented for post-exec tx"]),
+            OpTxType::Aa => Err(vec!["not implemented for EIP-8430 tx"]),
             _ => {
                 let ty = TxType::try_from(ty as u8).unwrap();
                 NetworkTransactionBuilder::<Ethereum>::complete_type(self.as_ref(), ty)

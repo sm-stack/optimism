@@ -20,7 +20,8 @@ mod alloy_compat;
 
 mod receipts;
 pub use receipts::{
-    OpDepositReceipt, OpDepositReceiptWithBloom, OpReceipt, OpReceiptEnvelope, OpTxReceipt,
+    OpAaReceipt, OpDepositReceipt, OpDepositReceiptWithBloom, OpReceipt, OpReceiptEnvelope,
+    OpTxReceipt,
 };
 
 pub mod transaction;
@@ -37,6 +38,24 @@ pub use eip1559::{
 
 pub mod post_exec;
 pub use post_exec::*;
+
+pub mod proof_aggregate;
+pub use proof_aggregate::*;
+
+pub mod aa;
+pub use aa::{
+    AA_TX_TYPE_ID, AaCall, AaTxError, AccountChange, Actor, Authorization, DEPENDENCY_DA_SIZE,
+    K1_AUTHENTICATOR, K1_NAMED_AUTH_LEN, LEANSPHINCS_VERIFICATION_GAS, LEANSTARK_VERIFICATION_GAS,
+    MAX_AUTHENTICATION_GAS, Payer, SIGNATURE_PROGRAM_DIGEST, STATEMENT_AUTH_LEN, SenderGas,
+    StatementActor, TX_CONTEXT_ADDRESS, TxEip8430,
+};
+
+pub mod keystore;
+
+pub mod dependency;
+pub use dependency::{
+    DeclaredDependencies, Dependency, PROOF_STATEMENT_SCHEME, declared_dependencies,
+};
 
 mod source;
 pub use source::*;

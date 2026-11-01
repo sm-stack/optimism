@@ -10,7 +10,7 @@ use op_alloy_consensus::{
 use serde::{Deserialize, Serialize};
 
 mod request;
-pub use request::OpTransactionRequest;
+pub use request::{AaRequestFields, OpTransactionRequest};
 
 /// OP Transaction type
 #[derive(
@@ -224,6 +224,10 @@ impl<T: OpTransaction> OpTransaction for Transaction<T> {
 
     fn as_post_exec(&self) -> Option<&Sealed<TxPostExec>> {
         self.inner.as_ref().as_post_exec()
+    }
+
+    fn as_aa(&self) -> Option<&Sealed<op_alloy_consensus::TxEip8430>> {
+        self.inner.as_ref().as_aa()
     }
 }
 

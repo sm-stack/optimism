@@ -13,10 +13,12 @@
 //!   only serialization performance differs (clone vs borrow).
 //! - `Compress`/`Decompress` impls for `OpTxEnvelope` and `OpReceipt` are added here since they
 //!   were previously provided by reth's in-tree codecs crate.
+//! - EIP-8430 transactions (0x79) are stored as their RLP encoding; an EIP-8430 receipt's
+//!   `committed_phases` takes the deposit nonce's slot of `CompactOpReceipt`.
 
 use crate::{
     OpReceipt, OpTxEnvelope, OpTxType, OpTypedTransaction, POST_EXEC_TX_TYPE_ID, TxDeposit,
-    TxPostExec,
+    TxEip8430, TxPostExec, aa::AA_TX_TYPE_ID,
 };
 use alloc::vec::Vec;
 use alloy_consensus::{Receipt, Signed, Transaction};
@@ -51,6 +53,10 @@ impl Compact for OpTxType {
                 buf.put_u8(POST_EXEC_TX_TYPE_ID);
                 COMPACT_EXTENDED_IDENTIFIER_FLAG
             }
+            Self::Aa => {
+                buf.put_u8(AA_TX_TYPE_ID);
+                COMPACT_EXTENDED_IDENTIFIER_FLAG
+            }
         }
     }
 
@@ -66,6 +72,7 @@ impl Compact for OpTxType {
                     alloy_consensus::constants::EIP7702_TX_TYPE_ID => Self::Eip7702,
                     crate::DEPOSIT_TX_TYPE_ID => Self::Deposit,
                     POST_EXEC_TX_TYPE_ID => Self::PostExec,
+                    AA_TX_TYPE_ID => Self::Aa,
                     _ => panic!("Unsupported OpTxType identifier: {extended_identifier}"),
                 };
                 (ty, buf)
@@ -154,6 +161,23 @@ impl Compact for TxPostExec {
     }
 }
 
+impl Compact for TxEip8430 {
+    fn to_compact<B>(&self, buf: &mut B) -> usize
+    where
+        B: bytes::BufMut + AsMut<[u8]>,
+    {
+        let mut rlp = Vec::with_capacity(self.rlp_encoded_length());
+        alloy_rlp::Encodable::encode(self, &mut rlp);
+        Bytes::from(rlp).to_compact(buf)
+    }
+
+    fn from_compact(buf: &[u8], len: usize) -> (Self, &[u8]) {
+        let (rlp, buf) = Bytes::from_compact(buf, len);
+        let tx = Self::decode(&mut rlp.as_ref()).expect("valid compact EIP-8430 tx");
+        (tx, buf)
+    }
+}
+
 // --- OpTypedTransaction ---
 
 impl Compact for OpTypedTransaction {
@@ -180,6 +204,9 @@ impl Compact for OpTypedTransaction {
                 tx.to_compact(buf);
             }
             Self::PostExec(tx) => {
+                tx.to_compact(buf);
+            }
+            Self::Aa(tx) => {
                 tx.to_compact(buf);
             }
         }
@@ -213,6 +240,10 @@ impl Compact for OpTypedTransaction {
                 let (tx, buf) = TxPostExec::from_compact(buf, buf.len());
                 (Self::PostExec(tx), buf)
             }
+            OpTxType::Aa => {
+                let (tx, buf) = TxEip8430::from_compact(buf, buf.len());
+                (Self::Aa(tx), buf)
+            }
         }
     }
 }
@@ -226,7 +257,7 @@ impl Envelope for OpTxEnvelope {
             Self::Eip2930(tx) => tx.signature(),
             Self::Eip1559(tx) => tx.signature(),
             Self::Eip7702(tx) => tx.signature(),
-            Self::Deposit(_) | Self::PostExec(_) => {
+            Self::Deposit(_) | Self::PostExec(_) | Self::Aa(_) => {
                 const DEPOSIT_SIG: Signature = Signature::new(U256::ZERO, U256::ZERO, false);
                 &DEPOSIT_SIG
             }
@@ -259,6 +290,9 @@ impl ToTxCompact for OpTxEnvelope {
                 tx.inner().to_compact(buf);
             }
             Self::PostExec(tx) => {
+                tx.inner().to_compact(buf);
+            }
+            Self::Aa(tx) => {
                 tx.inner().to_compact(buf);
             }
         };
@@ -298,6 +332,10 @@ impl FromTxCompact for OpTxEnvelope {
             OpTxType::PostExec => {
                 let (tx, buf) = TxPostExec::from_compact(buf, buf.len());
                 (Self::PostExec(alloy_consensus::Sealed::new(tx)), buf)
+            }
+            OpTxType::Aa => {
+                let (tx, buf) = TxEip8430::from_compact(buf, buf.len());
+                (Self::Aa(alloy_consensus::Sealed::new(tx)), buf)
             }
         }
     }
@@ -354,13 +392,16 @@ impl From<&OpReceipt> for CompactOpReceipt {
         use alloy_consensus::TxReceipt;
         let (deposit_nonce, deposit_receipt_version) = match receipt {
             OpReceipt::Deposit(deposit) => (deposit.deposit_nonce, deposit.deposit_receipt_version),
+            // An EIP-8430 receipt's committed phases ride in the deposit nonce's slot.
+            OpReceipt::Aa(aa) => (Some(aa.committed_phases), None),
             _ => (None, None),
         };
+        let logs = receipt.as_receipt().logs.clone();
         Self {
             tx_type: receipt.tx_type(),
             success: receipt.status(),
             cumulative_gas_used: receipt.cumulative_gas_used(),
-            logs: receipt.as_receipt().logs.clone(),
+            logs,
             deposit_nonce,
             deposit_receipt_version,
         }
@@ -384,6 +425,10 @@ impl From<CompactOpReceipt> for OpReceipt {
                 inner: receipt,
                 deposit_nonce: compact.deposit_nonce,
                 deposit_receipt_version: compact.deposit_receipt_version,
+            }),
+            OpTxType::Aa => Self::Aa(crate::OpAaReceipt {
+                inner: receipt,
+                committed_phases: compact.deposit_nonce.expect("committed phases"),
             }),
         }
     }

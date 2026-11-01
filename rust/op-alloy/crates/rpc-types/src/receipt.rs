@@ -22,6 +22,10 @@ pub struct OpTransactionReceipt {
     /// Per-transaction gas refund from post-exec block-level warming.
     #[serde(default, skip_serializing_if = "Option::is_none", with = "alloy_serde::quantity::opt")]
     pub op_gas_refund: Option<u64>,
+    /// The resolved payer of an EIP-8430 transaction: the sender for self-pay, else the account
+    /// whose authorization pays. `None` for other types.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub payer: Option<alloy_primitives::Address>,
 }
 
 impl alloy_network_primitives::ReceiptResponse for OpTransactionReceipt {
@@ -253,6 +257,9 @@ impl From<OpTransactionReceipt> for OpReceiptEnvelope<alloy_primitives::Log> {
                     logs_bloom,
                 };
                 Self::Deposit(consensus_receipt)
+            }
+            OpReceiptEnvelope::Aa(receipt) => {
+                Self::Aa(receipt.map_receipt(|receipt| receipt.map_logs(|log| log.inner)))
             }
         }
     }

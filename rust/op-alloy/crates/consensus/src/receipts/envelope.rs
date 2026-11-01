@@ -1,6 +1,6 @@
 //! Receipt envelope types for Optimism.
 
-use crate::{OpDepositReceipt, OpDepositReceiptWithBloom, OpTxType};
+use crate::{OpAaReceipt, OpDepositReceipt, OpDepositReceiptWithBloom, OpTxType};
 use alloc::vec::Vec;
 use alloy_consensus::{Eip658Value, Receipt, ReceiptWithBloom, TxReceipt};
 use alloy_eips::{
@@ -59,10 +59,18 @@ pub enum OpReceiptEnvelope<T = Log> {
     /// [deposit]: https://specs.optimism.io/protocol/deposits.html
     #[cfg_attr(feature = "serde", serde(rename = "0x7e", alias = "0x7E"))]
     Deposit(ReceiptWithBloom<OpDepositReceipt<T>>),
+    /// Receipt envelope with type flag 0x79, containing an [EIP-8430] receipt.
+    ///
+    /// [EIP-8430]: https://github.com/ethereum/EIPs/pull/12385
+    #[cfg_attr(feature = "serde", serde(rename = "0x79"))]
+    Aa(ReceiptWithBloom<OpAaReceipt<T>>),
 }
 
 impl OpReceiptEnvelope<Log> {
     /// Creates a new [`OpReceiptEnvelope`] from the given parts.
+    ///
+    /// The parts cannot express an [`OpTxType::Aa`] receipt's committed phases: the result has
+    /// none.
     pub fn from_parts<'a>(
         status: bool,
         cumulative_gas_used: u64,
@@ -102,6 +110,10 @@ impl OpReceiptEnvelope<Log> {
                 };
                 Self::Deposit(inner)
             }
+            OpTxType::Aa => Self::Aa(ReceiptWithBloom {
+                receipt: OpAaReceipt { inner: inner_receipt, committed_phases: 0 },
+                logs_bloom,
+            }),
         }
     }
 }
@@ -116,6 +128,7 @@ impl<T> OpReceiptEnvelope<T> {
             Self::Eip7702(_) => OpTxType::Eip7702,
             Self::PostExec(_) => OpTxType::PostExec,
             Self::Deposit(_) => OpTxType::Deposit,
+            Self::Aa(_) => OpTxType::Aa,
         }
     }
 
@@ -145,6 +158,7 @@ impl<T> OpReceiptEnvelope<T> {
             Self::Eip7702(r) => OpReceiptEnvelope::Eip7702(r.map_logs(f)),
             Self::PostExec(r) => OpReceiptEnvelope::PostExec(r.map_logs(f)),
             Self::Deposit(r) => OpReceiptEnvelope::Deposit(r.map_receipt(|r| r.map_logs(f))),
+            Self::Aa(r) => OpReceiptEnvelope::Aa(r.map_receipt(|r| r.map_logs(f))),
         }
     }
 
@@ -167,6 +181,7 @@ impl<T> OpReceiptEnvelope<T> {
             Self::Eip7702(t) |
             Self::PostExec(t) => &t.logs_bloom,
             Self::Deposit(t) => &t.logs_bloom,
+            Self::Aa(t) => &t.logs_bloom,
         }
     }
 
@@ -205,6 +220,7 @@ impl<T> OpReceiptEnvelope<T> {
             Self::Eip7702(t) |
             Self::PostExec(t) => t.receipt,
             Self::Deposit(t) => t.receipt.into_inner(),
+            Self::Aa(t) => t.receipt.inner,
         }
     }
 
@@ -218,6 +234,7 @@ impl<T> OpReceiptEnvelope<T> {
             Self::Eip7702(t) |
             Self::PostExec(t) => Some(&t.receipt),
             Self::Deposit(t) => Some(&t.receipt.inner),
+            Self::Aa(t) => Some(&t.receipt.inner),
         }
     }
 }
@@ -232,6 +249,7 @@ impl OpReceiptEnvelope {
             Self::Eip7702(t) |
             Self::PostExec(t) => t.length(),
             Self::Deposit(t) => t.length(),
+            Self::Aa(t) => t.length(),
         }
     }
 
@@ -309,6 +327,7 @@ impl Typed2718 for OpReceiptEnvelope {
             Self::Eip7702(_) => OpTxType::Eip7702,
             Self::PostExec(_) => OpTxType::PostExec,
             Self::Deposit(_) => OpTxType::Deposit,
+            Self::Aa(_) => OpTxType::Aa,
         };
         ty as u8
     }
@@ -332,6 +351,7 @@ impl Encodable2718 for OpReceiptEnvelope {
         }
         match self {
             Self::Deposit(t) => t.encode(out),
+            Self::Aa(t) => t.encode(out),
             Self::Legacy(t) |
             Self::Eip2930(t) |
             Self::Eip1559(t) |
@@ -353,6 +373,7 @@ impl Decodable2718 for OpReceiptEnvelope {
             OpTxType::Eip2930 => Ok(Self::Eip2930(Decodable::decode(buf)?)),
             OpTxType::PostExec => Ok(Self::PostExec(Decodable::decode(buf)?)),
             OpTxType::Deposit => Ok(Self::Deposit(Decodable::decode(buf)?)),
+            OpTxType::Aa => Ok(Self::Aa(Decodable::decode(buf)?)),
         }
     }
 
@@ -382,12 +403,13 @@ where
     T: arbitrary::Arbitrary<'a>,
 {
     fn arbitrary(u: &mut arbitrary::Unstructured<'a>) -> arbitrary::Result<Self> {
-        match u.int_in_range(0..=5)? {
+        match u.int_in_range(0..=6)? {
             0 => Ok(Self::Legacy(ReceiptWithBloom::arbitrary(u)?)),
             1 => Ok(Self::Eip2930(ReceiptWithBloom::arbitrary(u)?)),
             2 => Ok(Self::Eip1559(ReceiptWithBloom::arbitrary(u)?)),
             3 => Ok(Self::Eip7702(ReceiptWithBloom::arbitrary(u)?)),
             4 => Ok(Self::PostExec(ReceiptWithBloom::arbitrary(u)?)),
+            5 => Ok(Self::Aa(ReceiptWithBloom::arbitrary(u)?)),
             _ => Ok(Self::Deposit(OpDepositReceiptWithBloom::arbitrary(u)?)),
         }
     }
