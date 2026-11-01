@@ -16,9 +16,9 @@ import (
 
 // RawTransaction is a canonical binary-encoded transaction — a typed-tx
 // envelope, or the RLP of a legacy transaction — that (un)marshals the
-// eth_getBlockBy* JSON transaction-object form. The OP Stack synthetic classes
-// (0x7E deposit, 0x7D post-exec) are codec'd by op-core/types; everything else
-// by go-ethereum. Keeping block transactions in this form lets an L2 block
+// eth_getBlockBy* JSON transaction-object form. The OP Stack classes (0x7E
+// deposit, 0x7D post-exec, 0x79 EIP-8430) are codec'd by
+// op-core/types; everything else by go-ethereum. Keeping block transactions in this form lets an L2 block
 // round-trip without go-ethereum's types.Transaction ever holding an OP
 // synthetic transaction: the transactions-trie leaf of a typed transaction IS
 // its opaque encoding, and class-specific access decodes on demand.
@@ -75,6 +75,12 @@ func (tx *RawTransaction) UnmarshalJSON(input []byte) error {
 			return fmt.Errorf("invalid post-exec tx: %w", err)
 		}
 		raw, err = p.MarshalBinary()
+	case uint64(optypes.AaTxType):
+		var a optypes.AaTx
+		if err := json.Unmarshal(input, &a); err != nil {
+			return fmt.Errorf("invalid EIP-8430 tx: %w", err)
+		}
+		raw, err = a.MarshalBinary()
 	default:
 		var gtx types.Transaction
 		if err := gtx.UnmarshalJSON(input); err != nil {
@@ -108,6 +114,12 @@ func (tx RawTransaction) MarshalJSON() ([]byte, error) {
 			return nil, err
 		}
 		return json.Marshal(p)
+	case optypes.AaTxType:
+		a, err := optypes.UnmarshalAaTx(tx)
+		if err != nil {
+			return nil, err
+		}
+		return json.Marshal(a)
 	default:
 		var gtx types.Transaction
 		if err := gtx.UnmarshalBinary(tx); err != nil {
@@ -143,9 +155,10 @@ func (txs RawTransactions) Hashes() []common.Hash {
 // Geth decodes all transactions into go-ethereum types.Transactions.
 //
 // Use the class-partitioned accessors instead for L2 blocks: they can contain
-// OP Stack synthetic transactions (0x7E deposits, 0x7D post-exec), which
-// upstream go-ethereum's transaction decoding rejects. This decode works on
-// such blocks only while the build resolves go-ethereum to op-geth.
+// OP Stack transactions that upstream go-ethereum's transaction decoding
+// rejects. op-geth decodes the synthetic ones (0x7E deposits, 0x7D post-exec)
+// but no build decodes EIP-8430 (0x79) transactions, so this fails on a block
+// holding one.
 func (txs RawTransactions) Geth() (types.Transactions, error) {
 	out := make(types.Transactions, len(txs))
 	for i, raw := range txs {
@@ -160,7 +173,8 @@ func (txs RawTransactions) Geth() (types.Transactions, error) {
 
 // UserTxs decodes the standard Ethereum transactions of the list — every
 // transaction that is not an OP Stack synthetic (0x7E deposit or 0x7D
-// post-exec) — into go-ethereum types.Transactions.
+// post-exec) or an EIP-8430 transaction (0x79), which go-ethereum cannot
+// decode — into go-ethereum types.Transactions.
 func (txs RawTransactions) UserTxs() (types.Transactions, error) {
 	out := make(types.Transactions, 0, len(txs))
 	for i, raw := range txs {
@@ -168,7 +182,7 @@ func (txs RawTransactions) UserTxs() (types.Transactions, error) {
 			return nil, fmt.Errorf("tx %d is empty", i)
 		}
 		switch raw.Type() {
-		case optypes.DepositTxType, optypes.PostExecTxType:
+		case optypes.DepositTxType, optypes.PostExecTxType, optypes.AaTxType:
 			continue
 		}
 		tx := new(types.Transaction)

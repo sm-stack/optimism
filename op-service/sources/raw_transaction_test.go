@@ -3,6 +3,7 @@ package sources
 import (
 	"encoding/json"
 	"math/big"
+	"strings"
 	"testing"
 
 	"github.com/holiman/uint256"
@@ -13,6 +14,8 @@ import (
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/trie"
+
+	optypes "github.com/ethereum-optimism/optimism/op-core/types"
 )
 
 // l2BlockTxs builds the transaction list shape of a Lagoon-era L2 block via
@@ -239,4 +242,45 @@ func TestRawTransactionsGeth(t *testing.T) {
 
 	_, err = RawTransactions{{0xff}}.Geth()
 	require.Error(t, err)
+}
+
+// TestRawTransactionJSONAaTx covers the 0x79 class: the RPC object op-reth serves for an EIP-8430
+// transaction, with the block-context fields it adds, decodes to the canonical encoding and back,
+// and user-tx partitioning skips it.
+func TestRawTransactionJSONAaTx(t *testing.T) {
+	aaTx := &optypes.AaTx{
+		ChainID:              901,
+		NonceKey:             new(big.Int),
+		NonceSequence:        1,
+		MaxPriorityFeePerGas: big.NewInt(1),
+		MaxFeePerGas:         big.NewInt(2),
+		GasLimit:             100_000,
+		AccountChanges: []optypes.AccountChange{{Type: optypes.AccountChangeDependencies, Dependencies: []optypes.Dependency{
+			{Scheme: optypes.ProofStatementScheme, VerificationKeyHash: common.HexToHash("0xaa")},
+		}}},
+		Calls:      [][]optypes.AaCall{{{To: common.HexToAddress("0x2222222222222222222222222222222222222222"), Value: big.NewInt(7)}}},
+		SenderAuth: make([]byte, 65),
+	}
+	want, err := aaTx.MarshalBinary()
+	require.NoError(t, err)
+	obj, err := json.Marshal(aaTx)
+	require.NoError(t, err)
+	// op-reth adds the block context and the sender to the object.
+	withContext := strings.Replace(string(obj), "{", `{"blockNumber":"0x1","transactionIndex":"0x0","from":"0x1111111111111111111111111111111111111111",`, 1)
+
+	var tx RawTransaction
+	require.NoError(t, json.Unmarshal([]byte(withContext), &tx))
+	require.Equal(t, RawTransaction(want), tx)
+	require.Equal(t, byte(optypes.AaTxType), tx.Type())
+	require.Equal(t, aaTx.Hash(), tx.Hash())
+
+	enc, err := json.Marshal(tx)
+	require.NoError(t, err)
+	var again RawTransaction
+	require.NoError(t, json.Unmarshal(enc, &again))
+	require.Equal(t, tx, again)
+
+	userTxs, err := RawTransactions{tx}.UserTxs()
+	require.NoError(t, err)
+	require.Empty(t, userTxs)
 }

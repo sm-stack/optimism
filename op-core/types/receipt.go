@@ -2,8 +2,10 @@ package types
 
 import (
 	"encoding/json"
+	"errors"
 	"math/big"
 
+	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/hexutil"
 	"github.com/ethereum/go-ethereum/core/types"
 )
@@ -46,6 +48,12 @@ type Receipt struct {
 	OperatorFeeConstant *uint64 `json:"operatorFeeConstant,omitempty"`
 	// DAFootprintGasScalar is nil prior to the Jovian hardfork.
 	DAFootprintGasScalar *uint64 `json:"daFootprintGasScalar,omitempty"`
+	// CommittedPhases is the number of phases of an EIP-8430 (0x79) transaction that committed;
+	// nil for other types.
+	CommittedPhases *uint64 `json:"committedPhases,omitempty"`
+	// Payer is the resolved payer of an EIP-8430 (0x79) transaction, as op-reth reports it; nil for
+	// other types. It is not part of the consensus encoding.
+	Payer *common.Address `json:"payer,omitempty"`
 }
 
 // receiptOpFields is the wire representation of the OP Stack receipt extensions.
@@ -62,6 +70,8 @@ type receiptOpFields struct {
 	OperatorFeeScalar     *hexutil.Uint64 `json:"operatorFeeScalar,omitempty"`
 	OperatorFeeConstant   *hexutil.Uint64 `json:"operatorFeeConstant,omitempty"`
 	DAFootprintGasScalar  *hexutil.Uint64 `json:"daFootprintGasScalar,omitempty"`
+	CommittedPhases       *hexutil.Uint64 `json:"committedPhases,omitempty"`
+	Payer                 *common.Address `json:"payer,omitempty"`
 }
 
 // UnmarshalJSON decodes both the embedded go-ethereum receipt and the OP Stack
@@ -86,6 +96,11 @@ func (r *Receipt) UnmarshalJSON(input []byte) error {
 	r.OperatorFeeScalar = (*uint64)(dec.OperatorFeeScalar)
 	r.OperatorFeeConstant = (*uint64)(dec.OperatorFeeConstant)
 	r.DAFootprintGasScalar = (*uint64)(dec.DAFootprintGasScalar)
+	r.CommittedPhases = (*uint64)(dec.CommittedPhases)
+	r.Payer = dec.Payer
+	if r.Type == AaTxType && r.CommittedPhases == nil {
+		return errors.New("EIP-8430 receipt without committedPhases")
+	}
 	return nil
 }
 
@@ -113,6 +128,8 @@ func (r Receipt) MarshalJSON() ([]byte, error) {
 		OperatorFeeScalar:     (*hexutil.Uint64)(r.OperatorFeeScalar),
 		OperatorFeeConstant:   (*hexutil.Uint64)(r.OperatorFeeConstant),
 		DAFootprintGasScalar:  (*hexutil.Uint64)(r.DAFootprintGasScalar),
+		CommittedPhases:       (*hexutil.Uint64)(r.CommittedPhases),
+		Payer:                 r.Payer,
 	})
 	if err != nil {
 		return nil, err

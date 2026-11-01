@@ -2,6 +2,7 @@ package types
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"io"
 	"math/big"
@@ -89,6 +90,25 @@ type depositReceiptRLP struct {
 	DepositReceiptVersion *uint64 `rlp:"optional"`
 }
 
+// aaReceiptRLP is the consensus encoding of an EIP-8430 (0x79) receipt: an EIP-1559 receipt
+// followed by the number of phases that committed.
+type aaReceiptRLP struct {
+	PostStateOrStatus []byte
+	CumulativeGasUsed uint64
+	Bloom             types.Bloom
+	Logs              []*types.Log
+	CommittedPhases   uint64
+}
+
+// aaEncoding returns the consensus fields of an EIP-8430 receipt, or an error if it has no
+// committed phase count.
+func (r *Receipt) aaEncoding() (*aaReceiptRLP, error) {
+	if r.CommittedPhases == nil {
+		return nil, errors.New("EIP-8430 receipt without a committed phase count")
+	}
+	return &aaReceiptRLP{r.statusEncoding(), r.CumulativeGasUsed, r.Bloom, r.Logs, *r.CommittedPhases}, nil
+}
+
 var (
 	receiptStatusFailedRLP     = []byte{}
 	receiptStatusSuccessfulRLP = []byte{0x01}
@@ -139,6 +159,13 @@ func (rs Receipts) EncodeIndex(i int, w *bytes.Buffer) {
 	case PostExecTxType:
 		w.WriteByte(PostExecTxType)
 		_ = rlp.Encode(w, &receiptRLP{r.statusEncoding(), r.CumulativeGasUsed, r.Bloom, r.Logs})
+	case AaTxType:
+		// A receipt without its phase count has no encoding; writing nothing makes the derived
+		// root mismatch, so the caller rejects the receipts.
+		if data, err := r.aaEncoding(); err == nil {
+			w.WriteByte(AaTxType)
+			_ = rlp.Encode(w, data)
+		}
 	default:
 		types.Receipts{&r.Receipt}.EncodeIndex(0, w)
 	}
@@ -175,6 +202,12 @@ func (r *Receipt) Size() common.StorageSize {
 	if r.FeeScalar != nil {
 		size += common.StorageSize(unsafe.Sizeof(*r.FeeScalar))
 	}
+	if r.CommittedPhases != nil {
+		size += common.StorageSize(unsafe.Sizeof(*r.CommittedPhases))
+	}
+	if r.Payer != nil {
+		size += common.AddressLength
+	}
 	return size
 }
 
@@ -185,7 +218,7 @@ func (r *Receipt) Size() common.StorageSize {
 // consensus envelope; legacy receipts delegate.
 func (r *Receipt) EncodeRLP(w io.Writer) error {
 	switch r.Type {
-	case DepositTxType, PostExecTxType:
+	case DepositTxType, PostExecTxType, AaTxType:
 		envelope, err := r.MarshalBinary()
 		if err != nil {
 			return err
@@ -218,7 +251,7 @@ func (r *Receipt) DecodeRLP(s *rlp.Stream) error {
 }
 
 // MarshalBinary returns the consensus encoding of the receipt, routing the
-// OP Stack synthetic receipt types (0x7E deposit, 0x7D post-exec) to this
+// OP Stack receipt types (0x7E deposit, 0x7D post-exec, 0x79 EIP-8430) to this
 // package and everything else to go-ethereum. The deposit encoding reads the
 // authoritative OUTER DepositNonce/DepositReceiptVersion fields and — unlike
 // the receipts-root derivation in EncodeIndex — always includes the nonce when
@@ -234,13 +267,21 @@ func (r *Receipt) MarshalBinary() ([]byte, error) {
 		buf.WriteByte(PostExecTxType)
 		err := rlp.Encode(&buf, &receiptRLP{r.statusEncoding(), r.CumulativeGasUsed, r.Bloom, r.Logs})
 		return buf.Bytes(), err
+	case AaTxType:
+		data, err := r.aaEncoding()
+		if err != nil {
+			return nil, err
+		}
+		buf.WriteByte(AaTxType)
+		err = rlp.Encode(&buf, data)
+		return buf.Bytes(), err
 	default:
 		return r.Receipt.MarshalBinary()
 	}
 }
 
 // UnmarshalBinary decodes the consensus encoding of a receipt, routing the
-// OP Stack synthetic receipt types (0x7E deposit, 0x7D post-exec) to this
+// OP Stack receipt types (0x7E deposit, 0x7D post-exec, 0x79 EIP-8430) to this
 // package and everything else to go-ethereum. The OP JSON-only fee fields
 // (L1GasPrice, OperatorFeeScalar, ...) are not part of the consensus encoding
 // and remain nil.
@@ -274,6 +315,16 @@ func (r *Receipt) UnmarshalBinary(b []byte) error {
 		}
 		r.Type = PostExecTxType
 		r.CumulativeGasUsed, r.Bloom, r.Logs = data.CumulativeGasUsed, data.Bloom, data.Logs
+		return r.setStatus(data.PostStateOrStatus)
+	case AaTxType:
+		var data aaReceiptRLP
+		if err := rlp.DecodeBytes(b[1:], &data); err != nil {
+			return err
+		}
+		r.Type = AaTxType
+		r.CumulativeGasUsed, r.Bloom, r.Logs = data.CumulativeGasUsed, data.Bloom, data.Logs
+		committed := data.CommittedPhases
+		r.CommittedPhases = &committed
 		return r.setStatus(data.PostStateOrStatus)
 	default:
 		return r.Receipt.UnmarshalBinary(b)
