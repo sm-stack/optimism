@@ -97,6 +97,8 @@ allow-git = [
   "https://github.com/paradigmxyz/revm-inspectors",
   "https://github.com/foundry-rs/block-explorers",
   "https://github.com/sigp/discv5",
+  # leanVM with the OP Stack's patches, until they are upstream.
+  "https://github.com/sm-stack/leanVM",
 ]
 unknown-registry = "warn"
 unknown-git = "deny"

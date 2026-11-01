@@ -33,6 +33,9 @@ members = [
   # Op-Alloy
   "op-alloy/crates/*",
 
+  # Op-Aggregator
+  "op-aggregator/",
+
   # Op-Reth
   "op-reth/bin/",
   "op-reth/bin/proof-bench/",
@@ -74,6 +77,9 @@ members = [
 
   # Lokahi
   "lokahi/",
+
+  # leanVM tree aggregates
+  "op-leanvm-tree/",
 ]
 default-members = [
   "kona/bin/host",
@@ -203,6 +209,15 @@ proptest.opt-level = 3
 rand_chacha.opt-level = 3
 rand_xorshift.opt-level = 3
 unarray.opt-level = 3
+# leanVM's prover and verifier: debug builds prove leanVM tree aggregates, and the fault proof
+# program's build script builds a tree class, both far too slow unoptimized.
+leanvm.opt-level = 3
+primitives.opt-level = 3
+pcs.opt-level = 3
+flock.opt-level = 3
+fiat_shamir.opt-level = 3
+parallel.opt-level = 3
+zk.opt-level = 3
 
 [profile.fast-build]
 inherits = "dev"
@@ -219,6 +234,16 @@ debug = true
 [profile.dev-client]
 inherits = "dev"
 panic = "abort"
+
+# Build scripts build without optimization by default; `op-leanvm-tree`'s builds a leanVM tree class.
+[profile.release.package]
+leanvm.opt-level = 3
+primitives.opt-level = 3
+pcs.opt-level = 3
+flock.opt-level = 3
+fiat_shamir.opt-level = 3
+parallel.opt-level = 3
+zk.opt-level = 3
 
 [profile.release]
 opt-level = 3
@@ -347,6 +372,15 @@ op-alloy-rpc-jsonrpsee = { version = "2.0.0", path = "op-alloy/crates/rpc-jsonrp
 
 # ==================== ALLOY-OP-EVM / ALLOY-OP-HARDFORKS ====================
 alloy-op-evm = { version = "0.32.0", path = "alloy-op-evm/", default-features = false }
+op-leanvm-tree = { path = "op-leanvm-tree/", default-features = false }
+op-aggregator = { path = "op-aggregator/" }
+# leanVM with committed programs and mixed-program aggregation trees whose leaves publish member
+# lists, on branch op-stack/claim-set-leaves of our fork of leanEthereum/leanVM (big-endian safe); with its guest SDK
+# and its leanSPHINCS signature-member guest.
+leanvm = { git = "https://github.com/sm-stack/leanVM", rev = "95020052122016e3da122eff862abdd90033c231" }
+leanvm_guest = { git = "https://github.com/sm-stack/leanVM", rev = "95020052122016e3da122eff862abdd90033c231" }
+leansphincs = { git = "https://github.com/sm-stack/leanVM", rev = "95020052122016e3da122eff862abdd90033c231" }
+leansphincs-members-host = { git = "https://github.com/sm-stack/leanVM", rev = "95020052122016e3da122eff862abdd90033c231" }
 alloy-op-hardforks = { version = "0.5.0", path = "alloy-op-hardforks/", default-features = false }
 
 # ==================== RETH CRATES (crates.io) ====================
@@ -413,6 +447,7 @@ reth-revm = { git = "https://github.com/ethereum-optimism/reth", rev = "d9bd9875
 reth-rpc = { git = "https://github.com/ethereum-optimism/reth", rev = "d9bd9875fe88dcc0183d78b187ce2ceab0c93e93" }
 reth-rpc-api = { git = "https://github.com/ethereum-optimism/reth", rev = "d9bd9875fe88dcc0183d78b187ce2ceab0c93e93" }
 reth-rpc-builder = { git = "https://github.com/ethereum-optimism/reth", rev = "d9bd9875fe88dcc0183d78b187ce2ceab0c93e93" }
+reth-rpc-layer = { git = "https://github.com/ethereum-optimism/reth", rev = "d9bd9875fe88dcc0183d78b187ce2ceab0c93e93" }
 reth-rpc-engine-api = { git = "https://github.com/ethereum-optimism/reth", rev = "d9bd9875fe88dcc0183d78b187ce2ceab0c93e93" }
 reth-rpc-eth-api = { git = "https://github.com/ethereum-optimism/reth", rev = "d9bd9875fe88dcc0183d78b187ce2ceab0c93e93" }
 reth-rpc-eth-types = { git = "https://github.com/ethereum-optimism/reth", rev = "d9bd9875fe88dcc0183d78b187ce2ceab0c93e93", default-features = false }
@@ -555,6 +590,7 @@ sp1_bls12_381 = { version = "=0.8.0-sp1-6.0.0", default-features = false, featur
   "experimental",
 ] }
 sha2 = { version = "0.10.9", default-features = false }
+blake2 = { version = "0.10.6", default-features = false }
 secp256k1 = { version = "0.31.1", default-features = false }
 ark-ff = { version = "0.5.0", default-features = false }
 # `scalar_field` gates `Fr`, which kona-proof uses for blob point evaluation. Declare it

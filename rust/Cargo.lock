@@ -4228,7 +4228,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7ab67060fc6b8ef687992d439ca0fa36e7ed17e9a0b16b25b601e8757df720de"
 dependencies = [
  "data-encoding",
- "syn 2.0.117",
+ "syn 1.0.109",
 ]
 
 [[package]]
@@ -5237,6 +5237,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "64cd1e32ddd350061ae6edb1b082d7c54915b5c672c389143b9a63403a109f24"
 
 [[package]]
+name = "fiat_shamir"
+version = "0.1.0"
+source = "git+https://github.com/sm-stack/leanVM?rev=95020052122016e3da122eff862abdd90033c231#95020052122016e3da122eff862abdd90033c231"
+dependencies = [
+ "parallel",
+ "primitives",
+ "thiserror 2.0.18",
+]
+
+[[package]]
 name = "filetime"
 version = "0.2.27"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5321,6 +5331,19 @@ checksum = "7bffafbd079d520191c7c2779ae9cf757601266cf4167d3f659ff09617ff8483"
 dependencies = [
  "cfg-if",
  "rustc_version 0.2.3",
+]
+
+[[package]]
+name = "flock"
+version = "0.1.0"
+source = "git+https://github.com/sm-stack/leanVM?rev=95020052122016e3da122eff862abdd90033c231#95020052122016e3da122eff862abdd90033c231"
+dependencies = [
+ "fiat_shamir",
+ "parallel",
+ "pcs",
+ "primitives",
+ "thiserror 2.0.18",
+ "tracing",
 ]
 
 [[package]]
@@ -7221,6 +7244,7 @@ dependencies = [
  "lru 0.18.2",
  "op-alloy-consensus",
  "op-alloy-rpc-types-engine",
+ "op-leanvm-tree",
  "op-revm",
  "revm",
  "serde",
@@ -7249,6 +7273,7 @@ dependencies = [
  "kona-protocol",
  "kona-registry",
  "metrics",
+ "miniz_oxide 0.9.1",
  "op-alloy-consensus",
  "op-alloy-rpc-types-engine",
  "proptest",
@@ -7498,8 +7523,10 @@ dependencies = [
  "kona-providers-alloy",
  "kona-registry",
  "kona-std-fpvm",
+ "op-alloy-consensus",
  "op-alloy-network",
  "op-alloy-rpc-types-engine",
+ "op-leanvm-tree",
  "op-revm",
  "proptest",
  "revm",
@@ -7670,6 +7697,7 @@ dependencies = [
  "op-alloy-network",
  "op-alloy-provider",
  "op-alloy-rpc-types-engine",
+ "op-leanvm-tree",
  "rand 0.9.4",
  "rstest",
  "serde_json",
@@ -8094,6 +8122,7 @@ dependencies = [
  "kona-protocol",
  "kona-registry",
  "kona-sp1-client-utils",
+ "op-alloy-consensus",
  "op-alloy-rpc-types-engine",
  "revm",
  "serde_json",
@@ -8184,6 +8213,7 @@ dependencies = [
  "async-trait",
  "buddy_system_allocator",
  "cfg-if",
+ "getrandom 0.2.17",
  "kona-preimage",
  "thiserror 2.0.18",
  "tracing",
@@ -8291,6 +8321,57 @@ checksum = "bbd2bcb4c963f2ddae06a2efc7e9f3591312473c50c6685e1f298068316e66fe"
 dependencies = [
  "spin 0.9.8",
 ]
+
+[[package]]
+name = "leansphincs"
+version = "0.1.0"
+source = "git+https://github.com/sm-stack/leanVM?rev=95020052122016e3da122eff862abdd90033c231#95020052122016e3da122eff862abdd90033c231"
+dependencies = [
+ "leanvm_guest",
+ "thiserror 2.0.18",
+]
+
+[[package]]
+name = "leansphincs-members"
+version = "0.1.0"
+source = "git+https://github.com/sm-stack/leanVM?rev=95020052122016e3da122eff862abdd90033c231#95020052122016e3da122eff862abdd90033c231"
+dependencies = [
+ "leansphincs",
+ "leanvm_guest",
+ "thiserror 2.0.18",
+]
+
+[[package]]
+name = "leansphincs-members-host"
+version = "0.1.0"
+source = "git+https://github.com/sm-stack/leanVM?rev=95020052122016e3da122eff862abdd90033c231#95020052122016e3da122eff862abdd90033c231"
+dependencies = [
+ "leansphincs",
+ "leansphincs-members",
+ "leanvm_guest",
+]
+
+[[package]]
+name = "leanvm"
+version = "0.1.0"
+source = "git+https://github.com/sm-stack/leanVM?rev=95020052122016e3da122eff862abdd90033c231#95020052122016e3da122eff862abdd90033c231"
+dependencies = [
+ "fiat_shamir",
+ "flock",
+ "leanvm_guest",
+ "parallel",
+ "pcs",
+ "primitives",
+ "rand_core 0.9.5",
+ "thiserror 2.0.18",
+ "tracing",
+ "zk",
+]
+
+[[package]]
+name = "leanvm_guest"
+version = "0.1.0"
+source = "git+https://github.com/sm-stack/leanVM?rev=95020052122016e3da122eff862abdd90033c231#95020052122016e3da122eff862abdd90033c231"
 
 [[package]]
 name = "leb128fmt"
@@ -9764,6 +9845,29 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d6790f58c7ff633d8771f42965289203411a5e5c68388703c06e14f24770b41e"
 
 [[package]]
+name = "op-aggregator"
+version = "0.1.0"
+dependencies = [
+ "alloy-primitives",
+ "alloy-serde 2.5.0",
+ "async-trait",
+ "clap",
+ "eyre",
+ "jsonrpsee",
+ "op-alloy-consensus",
+ "op-leanvm-tree",
+ "reth-rpc-layer",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+ "tikv-jemallocator",
+ "tokio",
+ "tower 0.5.3",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
 name = "op-alloy"
 version = "2.0.0"
 dependencies = [
@@ -9789,6 +9893,7 @@ dependencies = [
  "alloy-signer 2.5.0",
  "arbitrary",
  "bincode 2.0.1",
+ "blake2",
  "bytes",
  "derive_more 2.1.1",
  "modular-bitfield",
@@ -9888,6 +9993,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "op-leanvm-tree"
+version = "0.1.0"
+dependencies = [
+ "alloy-primitives",
+ "flate2",
+ "leansphincs",
+ "leansphincs-members-host",
+ "leanvm",
+ "leanvm_guest",
+ "op-alloy-consensus",
+ "tracing",
+]
+
+[[package]]
 name = "op-reth"
 version = "2.0.0"
 dependencies = [
@@ -9953,6 +10072,7 @@ dependencies = [
  "alloy-primitives",
  "alloy-sol-types",
  "auto_impl",
+ "k256 0.13.4",
  "op-alloy-consensus",
  "revm",
  "rstest",
@@ -10513,6 +10633,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "parallel"
+version = "0.1.0"
+source = "git+https://github.com/sm-stack/leanVM?rev=95020052122016e3da122eff862abdd90033c231#95020052122016e3da122eff862abdd90033c231"
+dependencies = [
+ "libc",
+ "thiserror 2.0.18",
+]
+
+[[package]]
 name = "parity-scale-codec"
 version = "3.7.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -10599,6 +10728,19 @@ checksum = "f8ed6a7761f76e3b9f92dfb0a60a6a6477c61024b775147ff0973a02653abaf2"
 dependencies = [
  "digest 0.10.7",
  "hmac 0.12.1",
+]
+
+[[package]]
+name = "pcs"
+version = "0.1.0"
+source = "git+https://github.com/sm-stack/leanVM?rev=95020052122016e3da122eff862abdd90033c231#95020052122016e3da122eff862abdd90033c231"
+dependencies = [
+ "fiat_shamir",
+ "parallel",
+ "primitives",
+ "rand_core 0.9.5",
+ "thiserror 2.0.18",
+ "tracing",
 ]
 
 [[package]]
@@ -11036,6 +11178,15 @@ dependencies = [
  "fixed-hash",
  "impl-codec",
  "uint 0.9.5",
+]
+
+[[package]]
+name = "primitives"
+version = "0.1.0"
+source = "git+https://github.com/sm-stack/leanVM?rev=95020052122016e3da122eff862abdd90033c231#95020052122016e3da122eff862abdd90033c231"
+dependencies = [
+ "parallel",
+ "serde",
 ]
 
 [[package]]
@@ -13973,6 +14124,7 @@ name = "reth-optimism-node"
 version = "2.0.0"
 dependencies = [
  "alloy-consensus 2.4.2",
+ "alloy-eips 2.5.0",
  "alloy-genesis",
  "alloy-network 2.4.2",
  "alloy-op-evm",
@@ -13992,9 +14144,11 @@ dependencies = [
  "libc",
  "metrics",
  "metrics-util",
+ "op-aggregator",
  "op-alloy-consensus",
  "op-alloy-network",
  "op-alloy-rpc-types-engine",
+ "op-leanvm-tree",
  "op-revm",
  "reth-chain-state",
  "reth-chainspec",
@@ -14165,11 +14319,13 @@ dependencies = [
  "jsonrpsee-core",
  "jsonrpsee-types",
  "metrics",
+ "op-aggregator",
  "op-alloy-consensus",
  "op-alloy-network",
  "op-alloy-rpc-jsonrpsee",
  "op-alloy-rpc-types",
  "op-alloy-rpc-types-engine",
+ "op-leanvm-tree",
  "op-revm",
  "reqwest 0.13.2",
  "reth-basic-payload-builder",
@@ -20583,6 +20739,19 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.117",
+]
+
+[[package]]
+name = "zk"
+version = "0.1.0"
+source = "git+https://github.com/sm-stack/leanVM?rev=95020052122016e3da122eff862abdd90033c231#95020052122016e3da122eff862abdd90033c231"
+dependencies = [
+ "fiat_shamir",
+ "pcs",
+ "primitives",
+ "rand_chacha 0.9.0",
+ "rand_core 0.9.5",
+ "thiserror 2.0.18",
 ]
 
 [[package]]
