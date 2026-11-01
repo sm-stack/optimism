@@ -68,6 +68,9 @@ op-revm.workspace = true
 # ethereum
 alloy-primitives.workspace = true
 op-alloy-consensus.workspace = true
+op-leanvm-tree = { workspace = true, features = ["sequencer"] }
+op-aggregator.workspace = true
+alloy-eips.workspace = true
 op-alloy-rpc-types-engine.workspace = true
 alloy-rpc-types-engine.workspace = true
 alloy-rpc-types-eth.workspace = true

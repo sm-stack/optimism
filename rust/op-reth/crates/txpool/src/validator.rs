@@ -1,10 +1,18 @@
-use crate::{InvalidCrossTx, OpPooledTx, interop_filter::InteropFilterClient};
+use crate::{InvalidAaTx, InvalidCrossTx, OpPooledTx, interop_filter::InteropFilterClient};
 use alloy_consensus::{BlockHeader, Transaction};
-use alloy_primitives::U256;
-use op_revm::{L1BlockInfo, OpSpecId};
+use alloy_eips::Decodable2718;
+use alloy_primitives::{B256, U256};
+use op_alloy_consensus::{
+    AA_TX_TYPE_ID, Actor, MAX_AUTHENTICATION_GAS, TxEip8430, keystore::KEYSTORE_ADDRESS,
+};
+use op_revm::{
+    L1BlockInfo, OpSpecId,
+    aa::keystore::{Authorizer, Authorizers, authorize},
+    transaction::error::AaTxInvalid,
+};
 use parking_lot::RwLock;
 use reth_chainspec::ChainSpecProvider;
-use reth_evm::ConfigureEvm;
+use reth_evm::{ConfigureEvm, execute::BlockExecutionError};
 use reth_optimism_evm::{RethL1BlockInfo, revm_spec_by_timestamp_after_bedrock};
 use reth_optimism_forks::OpHardforks;
 use reth_primitives_traits::{
@@ -48,6 +56,42 @@ impl OpL1BlockInfo {
     }
 }
 
+/// Answers which statements a transaction with EIP-8288 dependencies was admitted with, verified
+/// (`optimism_sendRawTransactionWithStatementProofs`), by its admission key
+/// ([`op_alloy_consensus::DeclaredDependencies::key`]), so the pool may hold it. Shared with the
+/// sequencer's proof aggregation pool; the default admits nothing.
+#[derive(Clone)]
+pub struct DependencyAdmissions(Arc<AdmittedStatements>);
+
+/// The statement ids a transaction was admitted with, by its admission key.
+type AdmittedStatements = dyn Fn(&B256) -> Option<Vec<B256>> + Send + Sync;
+
+impl DependencyAdmissions {
+    /// Admissions answered by `admitted`.
+    pub fn new(admitted: impl Fn(&B256) -> Option<Vec<B256>> + Send + Sync + 'static) -> Self {
+        Self(Arc::new(admitted))
+    }
+
+    /// Whether the transaction declaring `declared` was admitted with exactly its statements. The
+    /// key leaves the authorizations out, and a STATEMENT authorization adds a statement, so the
+    /// same key may come with other statements than those admitted.
+    pub fn admits(&self, declared: &op_alloy_consensus::DeclaredDependencies) -> bool {
+        (self.0)(&declared.key).is_some_and(|ids| ids == declared.statement_ids())
+    }
+}
+
+impl Default for DependencyAdmissions {
+    fn default() -> Self {
+        Self::new(|_| None)
+    }
+}
+
+impl core::fmt::Debug for DependencyAdmissions {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("DependencyAdmissions").finish_non_exhaustive()
+    }
+}
+
 /// Validator for Optimism transactions.
 #[derive(Debug, Clone)]
 pub struct OpTransactionValidator<Client, Tx, Evm> {
@@ -55,14 +99,16 @@ pub struct OpTransactionValidator<Client, Tx, Evm> {
     inner: Arc<EthTransactionValidator<Client, Tx, Evm>>,
     /// Additional block info required for validation.
     block_info: Arc<OpL1BlockInfo>,
-    /// If true, ensure that the transaction's sender has enough balance to cover the L1 gas fee
-    /// derived from the tracked L1 block info that is extracted from the first transaction in the
-    /// L2 block.
+    /// If true, ensure that the transaction's sender, or an EIP-8430 transaction's payer, has
+    /// enough balance to cover the L1 gas fee derived from the tracked L1 block info that is
+    /// extracted from the first transaction in the L2 block.
     require_l1_data_gas_fee: bool,
     /// Client used to check transaction validity with the interop filter.
     interop_client: Option<InteropFilterClient>,
     /// tracks activated forks relevant for transaction validation
     fork_tracker: Arc<OpForkTracker>,
+    /// Which transactions with dependencies were admitted with verified proofs.
+    dependency_admissions: DependencyAdmissions,
 }
 
 impl<Client, Tx, Evm> OpTransactionValidator<Client, Tx, Evm> {
@@ -84,14 +130,14 @@ impl<Client, Tx, Evm> OpTransactionValidator<Client, Tx, Evm> {
         self.block_info.timestamp.load(Ordering::Relaxed)
     }
 
-    /// Whether to ensure that the transaction's sender has enough balance to also cover the L1 gas
-    /// fee.
+    /// Whether to ensure that the transaction's sender, or an EIP-8430 transaction's payer, has
+    /// enough balance to also cover the L1 gas fee.
     pub fn require_l1_data_gas_fee(self, require_l1_data_gas_fee: bool) -> Self {
         Self { require_l1_data_gas_fee, ..self }
     }
 
-    /// Returns whether this validator also requires the transaction's sender to have enough balance
-    /// to cover the L1 gas fee.
+    /// Returns whether this validator also requires the transaction's sender, or an EIP-8430
+    /// transaction's payer, to have enough balance to cover the L1 gas fee.
     pub const fn requires_l1_data_gas_fee(&self) -> bool {
         self.require_l1_data_gas_fee
     }
@@ -138,7 +184,14 @@ where
             require_l1_data_gas_fee: true,
             interop_client: None,
             fork_tracker: Arc::new(OpForkTracker { interop: AtomicBool::from(false) }),
+            dependency_admissions: DependencyAdmissions::default(),
         }
+    }
+
+    /// Sets which transactions with dependencies the pool may hold.
+    pub fn with_dependency_admissions(mut self, admissions: DependencyAdmissions) -> Self {
+        self.dependency_admissions = admissions;
+        self
     }
 
     /// Sets the interop filter client and safety level.
@@ -203,6 +256,9 @@ where
                 InvalidTransactionError::TxTypeNotSupported.into(),
             );
         }
+        if transaction.ty() == AA_TX_TYPE_ID {
+            return self.validate_aa_tx(transaction, state);
+        }
 
         // Reserve gas for the L1-info deposit that is present in every OP block, mirroring
         // op-geth's `EffectiveGasLimit` (`core/txpool/validation.go`). The L1-info deposit is
@@ -249,6 +305,220 @@ where
         self.apply_op_checks(outcome)
     }
 
+    /// Validates an EIP-8430 transaction.
+    ///
+    /// Its payer, not its sender, pays, so the generic balance check does not apply. Admission
+    /// checks what needs no EVM execution: activation, the static rules, the payer's signature, the
+    /// validity window, the size, the gas limits (the block's, EIP-7825's and the calldata floor),
+    /// the minimum tip, the sender's nonce, the payer's balance against
+    /// `max_fee_per_gas * effective_gas_limit` plus the L1 data and operator fees, EIP-3607 for a
+    /// sender's own key, and the EIP-8130 Keystore's authorization of the sender's and the payer's
+    /// actors. A secp256k1 sender's signature was checked when the transaction was recovered. A
+    /// transaction with EIP-8288 dependencies is admitted only once the proof aggregation RPC has
+    /// verified its statement proofs.
+    fn validate_aa_tx(
+        &self,
+        transaction: Tx,
+        state: &mut Option<Box<dyn AccountInfoReader + Send>>,
+    ) -> TransactionValidationOutcome<Tx> {
+        let invalid = |transaction, error: InvalidAaTx| {
+            TransactionValidationOutcome::Invalid(
+                transaction,
+                InvalidPoolTransactionError::Other(Box::new(error)),
+            )
+        };
+        if !self.chain_spec().is_aa_tx_active_at_timestamp(self.block_timestamp()) {
+            return TransactionValidationOutcome::Invalid(
+                transaction,
+                InvalidTransactionError::TxTypeNotSupported.into(),
+            );
+        }
+        let encoded = transaction.encoded_2718().into_owned();
+        let size = encoded.len();
+        let Ok(aa_tx) = TxEip8430::decode_2718(&mut &encoded[..]) else {
+            return invalid(transaction, InvalidAaTx::Malformed);
+        };
+        if let Err(error) = aa_tx.validate_static(self.inner.chain_id()) {
+            return invalid(transaction, error.into());
+        }
+        // The recovery checked the signatures; the Keystore must authorize the actors behind them.
+        let sender = transaction.sender();
+        let sender_actor = match aa_tx.sender {
+            // A recovered sender is the signer.
+            None => Actor::Key(sender),
+            Some(_) => match aa_tx.authenticate_sender() {
+                Ok((_, actor)) => actor,
+                Err(error) => return invalid(transaction, error.into()),
+            },
+        };
+        let payer_actor = match aa_tx.authenticate_payer(sender) {
+            Ok(payer) => payer,
+            Err(error) => return invalid(transaction, error.into()),
+        };
+        let payer = payer_actor.map_or(sender, |(payer, _)| payer);
+        if !aa_tx.is_valid_at(self.block_timestamp()) {
+            return invalid(transaction, InvalidAaTx::OutsideValidityWindow);
+        }
+        if aa_tx.payer_gas_reserve() > MAX_AUTHENTICATION_GAS {
+            return invalid(transaction, InvalidAaTx::PayerAuthenticationGas);
+        }
+        // A transaction with dependencies enters only once
+        // `optimism_sendRawTransactionWithStatementProofs` admitted it with verified proofs.
+        if let Some(declared) = aa_tx.declared_dependencies() &&
+            !self.dependency_admissions.admits(&declared)
+        {
+            return invalid(transaction, InvalidAaTx::Dependencies);
+        }
+        if size > self.inner.max_tx_input_bytes() {
+            return TransactionValidationOutcome::Invalid(
+                transaction,
+                InvalidPoolTransactionError::OversizedData {
+                    size,
+                    limit: self.inner.max_tx_input_bytes(),
+                },
+            );
+        }
+        let gas_limit = aa_tx.effective_gas_limit();
+        let block_limit = self.inner.block_gas_limit().saturating_sub(L1_INFO_GAS_OVERHEAD);
+        let effective_gas_limit =
+            block_limit.min(op_revm::revm::primitives::eip7825::TX_GAS_LIMIT_CAP);
+        if gas_limit > effective_gas_limit {
+            return TransactionValidationOutcome::Invalid(
+                transaction,
+                InvalidPoolTransactionError::ExceedsGasLimit(gas_limit, effective_gas_limit),
+            );
+        }
+        let floor = aa_tx.sender_floor(sender);
+        if aa_tx.gas_limit < floor {
+            return invalid(
+                transaction,
+                InvalidAaTx::BelowFloor { gas_limit: aa_tx.gas_limit, floor },
+            );
+        }
+        if let Some(minimum) = *self.inner.minimum_priority_fee() &&
+            aa_tx.max_priority_fee_per_gas < minimum
+        {
+            return TransactionValidationOutcome::Invalid(
+                transaction,
+                InvalidPoolTransactionError::PriorityFeeBelowMinimum {
+                    minimum_priority_fee: minimum,
+                },
+            );
+        }
+
+        if state.is_none() {
+            match self.client().latest() {
+                Ok(provider) => *state = Some(Box::new(provider)),
+                Err(error) => {
+                    return TransactionValidationOutcome::Error(
+                        *transaction.hash(),
+                        Box::new(error),
+                    );
+                }
+            }
+        }
+        let provider = state.as_ref().expect("provider is set");
+        let account = |address| provider.basic_account(&address).map(Option::unwrap_or_default);
+        let (sender_account, payer_account) = match (account(sender), account(payer)) {
+            (Ok(sender), Ok(payer)) => (sender, payer),
+            (Err(error), _) | (_, Err(error)) => {
+                return TransactionValidationOutcome::Error(*transaction.hash(), Box::new(error));
+            }
+        };
+        if aa_tx.nonce_sequence < sender_account.nonce {
+            return TransactionValidationOutcome::Invalid(
+                transaction,
+                InvalidTransactionError::NonceNotConsistent {
+                    tx: aa_tx.nonce_sequence,
+                    state: sender_account.nonce,
+                }
+                .into(),
+            );
+        }
+        // The payer also owes the L1 data fee, its dependencies' share included, and the operator
+        // fee. A sequencer proves a dependency for the transaction it admits, so a payer who cannot
+        // pay for that stays out. The fees are priced at admission, for this transaction alone: the
+        // builder skips one whose payer falls short later.
+        let op_fees = if self.requires_l1_data_gas_fee() {
+            match self.op_fees(&encoded, gas_limit, aa_tx.dependency_count()) {
+                Ok(fees) => fees,
+                Err(error) => {
+                    return TransactionValidationOutcome::Error(
+                        *transaction.hash(),
+                        Box::new(error),
+                    );
+                }
+            }
+        } else {
+            U256::ZERO
+        };
+        let gas_fee = U256::from(gas_limit) * U256::from(aa_tx.max_fee_per_gas);
+        if payer_account.balance < gas_fee.saturating_add(op_fees) {
+            return invalid(transaction, InvalidAaTx::PayerFunds);
+        }
+        let keystore = match self.client().latest() {
+            Ok(keystore) => keystore,
+            Err(error) => {
+                return TransactionValidationOutcome::Error(*transaction.hash(), Box::new(error));
+            }
+        };
+        // What execution refuses of a sender with code: a delegation over it, and EIP-3607's key
+        // recovering to the address. The account's other actors may send.
+        match self.inner.validate_sender_bytecode(&transaction, &sender_account, &keystore) {
+            Ok(Err(_)) if aa_tx.delegation().is_some() => {
+                return invalid(
+                    transaction,
+                    InvalidAaTx::Keystore(AaTxInvalid::DelegationOverCode),
+                );
+            }
+            Ok(Err(error)) if sender_actor == Actor::Key(sender) => {
+                return TransactionValidationOutcome::Invalid(transaction, error);
+            }
+            Ok(_) => {}
+            Err(outcome) => return outcome,
+        }
+        let authorizers = Authorizers {
+            sender: Authorizer::Actor(sender_actor),
+            payer: payer_actor.map(|(payer, actor)| (payer, Authorizer::Actor(actor))),
+        };
+        match authorize(&aa_tx, sender, authorizers, self.block_timestamp(), |slot| {
+            keystore.storage(KEYSTORE_ADDRESS, slot.into()).map(Option::unwrap_or_default)
+        }) {
+            Ok(Ok(())) => {}
+            Ok(Err(reason)) => return invalid(transaction, InvalidAaTx::Keystore(reason)),
+            Err(error) => {
+                return TransactionValidationOutcome::Error(*transaction.hash(), Box::new(error));
+            }
+        }
+
+        TransactionValidationOutcome::Valid {
+            balance: sender_account.balance,
+            state_nonce: sender_account.nonce,
+            bytecode_hash: None,
+            transaction: ValidTransaction::Valid(transaction),
+            propagate: true,
+            authorities: None,
+        }
+    }
+
+    /// The fees a transaction owes on top of its L2 gas, at the tracked L1 block info: the L1 data
+    /// fee, with `dependencies`' share for an EIP-8430 transaction, and the operator fee.
+    fn op_fees(
+        &self,
+        encoded: &[u8],
+        gas_limit: u64,
+        dependencies: u64,
+    ) -> Result<U256, BlockExecutionError> {
+        let mut l1_block_info = self.block_info.l1_block_info.read().clone();
+        let timestamp = self.block_timestamp();
+        let data_fee =
+            l1_block_info.l1_tx_data_fee(self.chain_spec(), timestamp, encoded, false)?;
+        let spec_id = revm_spec_by_timestamp_after_bedrock(self.chain_spec(), timestamp);
+        Ok(data_fee
+            .saturating_add(l1_block_info.dependency_l1_cost(dependencies))
+            .saturating_add(operator_fee_addition(&l1_block_info, spec_id, encoded, gas_limit)))
+    }
+
     /// Performs the necessary opstack specific checks based on top of the regular eth outcome.
     fn apply_op_checks(
         &self,
@@ -268,21 +538,7 @@ where
             authorities,
         } = outcome
         {
-            let mut l1_block_info = self.block_info.l1_block_info.read().clone();
-
             let encoded = valid_tx.transaction().encoded_2718();
-
-            let mut cost_addition = match l1_block_info.l1_tx_data_fee(
-                self.chain_spec(),
-                self.block_timestamp(),
-                &encoded,
-                false,
-            ) {
-                Ok(cost) => cost,
-                Err(err) => {
-                    return TransactionValidationOutcome::Error(*valid_tx.hash(), Box::new(err));
-                }
-            };
 
             // Also reserve the operator fee (introduced in Isthmus). The Isthmus exec-engine spec
             // mandates this pool behavior: "the transaction pool must reject transactions that do
@@ -292,14 +548,13 @@ where
             // (Jovian changes the formula: <https://specs.optimism.io/protocol/jovian/exec-engine.html#operator-fee>.)
             // Reserving only the L1 data fee above lets a sender covering L2 gas + value + L1 data
             // fee — but not the operator fee — be admitted to the pool and then fail at execution.
-            let spec_id =
-                revm_spec_by_timestamp_after_bedrock(self.chain_spec(), self.block_timestamp());
-            cost_addition = cost_addition.saturating_add(operator_fee_addition(
-                &l1_block_info,
-                spec_id,
-                &encoded,
-                valid_tx.transaction().gas_limit(),
-            ));
+            let cost_addition = match self.op_fees(&encoded, valid_tx.transaction().gas_limit(), 0)
+            {
+                Ok(fees) => fees,
+                Err(err) => {
+                    return TransactionValidationOutcome::Error(*valid_tx.hash(), Box::new(err));
+                }
+            };
 
             // Fold the OP fees into `cost()` so the pool's cumulative per-sender balance check
             // accounts for them too. This check only sees one transaction against the on-chain
@@ -604,5 +859,124 @@ mod tests {
             pool.get_queued_transactions_by_sender(signer).iter().map(|tx| tx.nonce()).collect();
         assert_eq!(pending, vec![0], "only nonce 0 is executable");
         assert_eq!(queued, vec![1], "nonce 1 cannot cover its L1 data fee after nonce 0");
+    }
+
+    /// The payer of a 0x79 transaction covers its L1 data fee, dependencies included, and its
+    /// operator fee to enter the pool.
+    #[tokio::test]
+    async fn pool_refuses_a_payer_short_of_the_dependency_fee() {
+        use crate::{DependencyAdmissions, OpPooledTransaction};
+        use alloy_eips::Encodable2718;
+        use alloy_primitives::{Address, B256, Sealed};
+        use op_alloy_consensus::{
+            AaCall, AccountChange, Dependency, OpTxEnvelope, PROOF_STATEMENT_SCHEME, TxEip8430,
+        };
+        use parking_lot::RwLock;
+        use reth_optimism_chainspec::OpChainSpecBuilder;
+        use reth_optimism_evm::{OpEvmConfig, RethL1BlockInfo};
+        use reth_optimism_primitives::OpPrimitives;
+        use reth_primitives_traits::Recovered;
+        use reth_provider::test_utils::{ExtendedAccount, MockEthProvider};
+        use reth_transaction_pool::{
+            TransactionOrigin, TransactionValidationOutcome, TransactionValidator,
+            blobstore::InMemoryBlobStore, validate::EthTransactionValidatorBuilder,
+        };
+        use std::sync::{Arc, atomic::AtomicU64};
+
+        use super::{OpL1BlockInfo, OpTransactionValidator};
+
+        let signer = Address::with_last_byte(1);
+        let tx = TxEip8430 {
+            chain_id: 10,
+            max_fee_per_gas: 10,
+            gas_limit: 500_000,
+            sender_auth: vec![0; 65].into(),
+            calls: vec![vec![AaCall { to: Address::with_last_byte(0x42), ..Default::default() }]],
+            account_changes: vec![AccountChange::Dependencies {
+                dependencies: vec![Dependency {
+                    scheme: PROOF_STATEMENT_SCHEME,
+                    data_hash: B256::repeat_byte(0xdd),
+                    verification_key_hash: B256::repeat_byte(0xaa),
+                }],
+            }],
+            ..Default::default()
+        };
+        let gas_limit = tx.effective_gas_limit();
+        let gas_fee = U256::from(gas_limit) * U256::from(tx.max_fee_per_gas);
+        let statements = tx.declared_dependencies().unwrap().statement_ids();
+        let hash = tx.sender_signature_hash();
+        let envelope = OpTxEnvelope::Aa(Sealed::new_unchecked(tx, hash));
+        let encoded = envelope.encoded_2718();
+        let chain_spec =
+            Arc::new(OpChainSpecBuilder::optimism_mainnet().lagoon_activated().build());
+        let l1_info = || L1BlockInfo {
+            l1_base_fee: U256::from(1_000_000),
+            l1_base_fee_scalar: U256::from(1_000_000),
+            ..l1_info_with_operator_fee(1_000, 1_000_000)
+        };
+        let operator_fee = operator_fee_addition(&l1_info(), OpSpecId::LAGOON, &encoded, gas_limit);
+        assert!(operator_fee > U256::ZERO);
+        let fee = l1_info().l1_tx_data_fee(chain_spec.clone(), 0, &encoded, false).unwrap() +
+            l1_info().dependency_l1_cost(1) +
+            operator_fee;
+
+        let validate = |balance: U256| {
+            let chain_spec = chain_spec.clone();
+            let statements = statements.clone();
+            let envelope = envelope.clone();
+            let size = encoded.len();
+            async move {
+                let client = MockEthProvider::<OpPrimitives>::new()
+                    .with_chain_spec(chain_spec.clone())
+                    .with_genesis_block();
+                client.add_account(signer, ExtendedAccount::new(0, balance));
+                let inner =
+                    EthTransactionValidatorBuilder::new(client, OpEvmConfig::optimism(chain_spec))
+                        .build(InMemoryBlobStore::default());
+                let validator = OpTransactionValidator::with_block_info(
+                    inner,
+                    OpL1BlockInfo {
+                        l1_block_info: RwLock::new(l1_info()),
+                        timestamp: AtomicU64::new(0),
+                    },
+                )
+                .with_dependency_admissions(DependencyAdmissions::new(move |_| {
+                    Some(statements.clone())
+                }));
+                let tx: OpPooledTransaction =
+                    OpPooledTransaction::new(Recovered::new_unchecked(envelope, signer), size);
+                validator.validate_transaction(TransactionOrigin::External, tx).await
+            }
+        };
+
+        let short = validate(gas_fee + fee - U256::from(1)).await;
+        assert!(matches!(short, TransactionValidationOutcome::Invalid(..)), "{short:?}");
+        let enough = validate(gas_fee + fee).await;
+        assert!(matches!(enough, TransactionValidationOutcome::Valid { .. }), "{enough:?}");
+    }
+
+    /// A transaction is admitted with exactly its statements: one under the same key with another
+    /// STATEMENT authorization, which adds another statement, is not.
+    #[test]
+    fn admissions_match_the_statements() {
+        use crate::DependencyAdmissions;
+        use alloy_primitives::B256;
+        use op_alloy_consensus::{DeclaredDependencies, Dependency, PROOF_STATEMENT_SCHEME};
+        let declared = |data: u8| DeclaredDependencies {
+            key: B256::repeat_byte(1),
+            declared: 1,
+            dependencies: vec![Dependency {
+                scheme: PROOF_STATEMENT_SCHEME,
+                data_hash: B256::repeat_byte(data),
+                verification_key_hash: B256::repeat_byte(9),
+            }],
+        };
+        let admitted = declared(2).statement_ids();
+        let admissions = DependencyAdmissions::new(move |key| {
+            (*key == B256::repeat_byte(1)).then(|| admitted.clone())
+        });
+        assert!(admissions.admits(&declared(2)));
+        assert!(!admissions.admits(&declared(3)), "same key, another statement");
+        assert!(!DependencyAdmissions::default().admits(&declared(2)));
     }
 }

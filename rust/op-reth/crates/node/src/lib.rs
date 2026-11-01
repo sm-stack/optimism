@@ -26,6 +26,9 @@ pub use engine::OpEngineTypes;
 pub mod head_metrics;
 pub use head_metrics::{OpChainHeadMetrics, maintain_chain_head_metrics};
 
+pub mod proof_aggregation_sync;
+pub use proof_aggregation_sync::{sync_proof_aggregation_forkchoice, sync_proof_aggregation_pool};
+
 pub mod node;
 pub use node::*;
 

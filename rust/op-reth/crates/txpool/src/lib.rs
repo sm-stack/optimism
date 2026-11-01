@@ -9,7 +9,7 @@
 #![cfg_attr(docsrs, feature(doc_cfg))]
 
 mod validator;
-pub use validator::{OpL1BlockInfo, OpTransactionValidator};
+pub use validator::{DependencyAdmissions, OpL1BlockInfo, OpTransactionValidator};
 
 pub mod conditional;
 mod pool;
@@ -20,7 +20,7 @@ pub use transaction::{OpPooledTransaction, OpPooledTx};
 mod error;
 pub mod interop;
 pub mod maintain;
-pub use error::InvalidCrossTx;
+pub use error::{InvalidAaTx, InvalidCrossTx};
 pub mod estimated_da_size;
 
 use reth_transaction_pool::{CoinbaseTipOrdering, Pool, TransactionValidationTaskExecutor};

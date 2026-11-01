@@ -21,6 +21,10 @@ impl OpReceiptBuilder for OpRethReceiptBuilder {
     ) -> Result<Self::Receipt, ReceiptBuilderCtx<'a, OpTxType, E>> {
         match ctx.tx_type {
             OpTxType::Deposit => Err(ctx),
+            OpTxType::Aa => Ok(OpReceipt::Aa(alloy_op_evm::block::receipt_builder::aa_receipt(
+                ctx.result,
+                ctx.cumulative_gas_used,
+            ))),
             ty => {
                 let receipt = Receipt {
                     // Success flag was added in `EIP-658: Embedding transaction status code in
@@ -36,7 +40,7 @@ impl OpReceiptBuilder for OpRethReceiptBuilder {
                     OpTxType::Eip2930 => OpReceipt::Eip2930(receipt),
                     OpTxType::Eip7702 => OpReceipt::Eip7702(receipt),
                     OpTxType::PostExec => OpReceipt::PostExec(receipt),
-                    OpTxType::Deposit => unreachable!(),
+                    OpTxType::Deposit | OpTxType::Aa => unreachable!(),
                 })
             }
         }

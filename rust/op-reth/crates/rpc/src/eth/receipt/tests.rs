@@ -8,7 +8,7 @@ use alloy_op_hardforks::{
     ForkCondition, OP_MAINNET_ISTHMUS_TIMESTAMP, OP_MAINNET_JOVIAN_TIMESTAMP,
     OP_MAINNET_KARST_TIMESTAMP, OpChainHardforks, OpHardfork,
 };
-use alloy_primitives::{Address, Bytes, Signature, U256, hex};
+use alloy_primitives::{Address, B256, Bytes, Sealed, Signature, U256, hex};
 use op_alloy_consensus::{OpTypedTransaction, SDMGasEntry, build_post_exec_tx};
 use op_alloy_network::eip2718::Decodable2718;
 use reth_optimism_chainspec::{OP_MAINNET, OpChainSpecBuilder};
@@ -142,6 +142,43 @@ fn op_receipt_fields_from_block_and_tx() {
         TX_META_TX_1_OP_MAINNET_BLOCK_124665056.l1_block_info.da_footprint_gas_scalar,
         "incorrect da footprint gas scalar"
     );
+}
+
+/// A 0x79 transaction's dependencies show in its L1 fee and L1 gas, as bytes it did not post.
+#[test]
+fn receipt_charges_dependencies_as_l1_bytes() {
+    use op_alloy_consensus::{AccountChange, Dependency, PROOF_STATEMENT_SCHEME, TxEip8430};
+
+    let dependency = Dependency {
+        scheme: PROOF_STATEMENT_SCHEME,
+        data_hash: B256::repeat_byte(0xdd),
+        verification_key_hash: B256::repeat_byte(0xaa),
+    };
+    let aa = |account_changes| {
+        let tx = TxEip8430 { chain_id: 10, account_changes, ..Default::default() };
+        let hash = tx.sender_signature_hash();
+        OpTransactionSigned::Aa(Sealed::new_unchecked(tx, hash))
+    };
+    let fields = |tx: &OpTransactionSigned| {
+        let mut l1_block_info = op_revm::L1BlockInfo {
+            l1_base_fee: U256::from(1_000_000),
+            l1_base_fee_scalar: U256::from(1_000_000),
+            ..Default::default()
+        };
+        let receipt = OpReceiptFieldsBuilder::new(BLOCK_124665056_TIMESTAMP, 124665056)
+            .l1_block_info(&*OP_MAINNET, tx, &mut l1_block_info)
+            .expect("failed to parse l1 block info")
+            .build();
+        (receipt.l1_block_info.l1_fee.unwrap(), receipt.l1_block_info.l1_gas_used.unwrap())
+    };
+
+    // Both are at the minimum estimated size, whatever the entry's bytes.
+    let (plain_fee, plain_gas) = fields(&aa(vec![]));
+    let (fee, gas) =
+        fields(&aa(vec![AccountChange::Dependencies { dependencies: vec![dependency; 2] }]));
+    // 1.6e13 / 1e6 = 1.6e7 wei a byte, 2,048 bytes a dependency, twice.
+    assert_eq!(fee - plain_fee, 2 * 2_048 * 16_000_000);
+    assert_eq!(gas - plain_gas, 2 * 2_048 * 16);
 }
 
 #[test]

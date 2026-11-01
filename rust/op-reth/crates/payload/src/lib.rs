@@ -31,6 +31,7 @@ pub mod validator;
 pub use validator::OpExecutionPayloadValidator;
 
 pub mod config;
+pub mod proof_aggregation;
 mod sdm_metrics;
 
 // Implement `ConfigureEngineEvm<OpExecData>` by delegating to the `OpExecutionData` implementation.

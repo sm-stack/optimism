@@ -73,6 +73,8 @@ pub(super) mod serde_bincode_compat {
         Deposit(
             op_alloy_consensus::serde_bincode_compat::OpDepositReceipt<'a, alloy_primitives::Log>,
         ),
+        /// EIP-8430 transaction receipt: `op-alloy`'s bincode form.
+        Aa(op_alloy_consensus::serde_bincode_compat::OpReceipt<'a>),
     }
 
     impl<'a> From<&'a super::OpReceipt> for OpReceipt<'a> {
@@ -84,6 +86,7 @@ pub(super) mod serde_bincode_compat {
                 super::OpReceipt::Eip7702(receipt) => Self::Eip7702(receipt.into()),
                 super::OpReceipt::PostExec(receipt) => Self::PostExec(receipt.into()),
                 super::OpReceipt::Deposit(receipt) => Self::Deposit(receipt.into()),
+                aa @ super::OpReceipt::Aa(_) => Self::Aa(aa.into()),
             }
         }
     }
@@ -97,6 +100,7 @@ pub(super) mod serde_bincode_compat {
                 OpReceipt::Eip7702(receipt) => Self::Eip7702(receipt.into()),
                 OpReceipt::PostExec(receipt) => Self::PostExec(receipt.into()),
                 OpReceipt::Deposit(receipt) => Self::Deposit(receipt.into()),
+                OpReceipt::Aa(receipt) => receipt.into(),
             }
         }
     }

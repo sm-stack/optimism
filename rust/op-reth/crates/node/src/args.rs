@@ -192,6 +192,23 @@ pub struct RollupArgs {
     )]
     pub operator_sdm_opt_in: bool,
 
+    /// Makes the sequencer prove no proof aggregate, so that derivation replaces every block with
+    /// a dependent transaction. For acceptance tests.
+    #[arg(long = "testing.disable-proof-aggregation", hide = true)]
+    #[doc(hidden)]
+    pub testing_disable_proof_aggregation: bool,
+
+    /// How many L2 blocks a proof aggregation run spans: a run ends at block `n` when
+    /// `(n + 1) % K == 0`, where op-batcher ends the channel holding it, so that an aggregate
+    /// shares the channel of its blocks. 0 leaves runs to op-aggregator.
+    #[arg(
+        long = "rollup.proof-aggregation-run-blocks",
+        value_name = "BLOCKS",
+        default_value_t = 0,
+        value_parser = clap::value_parser!(u64).range(0..=reth_optimism_payload_builder::proof_aggregation::MAX_RUN_BLOCKS)
+    )]
+    pub proof_aggregation_run_blocks: u64,
+
     /// Enables the deterministic SDM fixed-refund policy used by acceptance tests, optionally
     /// injecting excessive refunds for calls to the supplied address.
     #[arg(long = "testing.sdm-fixed-policy", value_name = "ADDRESS", hide = true)]
@@ -324,6 +341,8 @@ impl Default for RollupArgs {
             enable_tx_conditional: false,
             retain_forwarded_txs: false,
             operator_sdm_opt_in: false,
+            testing_disable_proof_aggregation: false,
+            proof_aggregation_run_blocks: 0,
             testing_sdm_fixed_policy: None,
             interop_http: Vec::new(),
             interop_min_responses: None,
@@ -501,6 +520,19 @@ mod tests {
         ])
         .args;
         assert_eq!(args, expected_args);
+    }
+
+    #[test]
+    fn test_parse_optimism_disable_proof_aggregation() {
+        let args = CommandParser::<RollupArgs>::parse_from([
+            "reth",
+            "--testing.disable-proof-aggregation",
+        ])
+        .args;
+        assert_eq!(
+            args,
+            RollupArgs { testing_disable_proof_aggregation: true, ..Default::default() }
+        );
     }
 
     /// The opt-in is also configurable via the `OP_RETH_OPERATOR_SDM_OPT_IN` environment variable.

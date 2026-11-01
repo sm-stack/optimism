@@ -1092,6 +1092,11 @@ where
         // async pool eviction, excludes interop txs that bypassed the filter (e.g. private or
         // local txs) and avoids racing eviction to drain the pool.
         let interop_failsafe_active = self.builder_config.interop_failsafe.enabled();
+        let dependencies_active =
+            self.chain_spec.is_proof_aggregation_active_at_timestamp(self.attributes().timestamp());
+        let proof_pool = &self.builder_config.proof_aggregation_pool;
+        // Statements this attempt's dependent transactions rely on: one aggregate must cover them.
+        let mut block_statements: alloy_primitives::map::HashSet<B256> = Default::default();
 
         while let Some(tx) = best_txs.next(()) {
             let interop = tx.interop_deadline();
@@ -1151,6 +1156,28 @@ where
                 best_txs.mark_invalid(tx.signer(), tx.nonce());
                 continue;
             }
+            // A transaction with EIP-8288 dependencies goes in only if the RPC admitted it
+            // with verified proofs, op-aggregator is there and aggregates are keeping up, and the
+            // block's statements stay within its limit; derivation replaces the block unless the
+            // aggregate responsible for it proves all its dependencies.
+            let mut dependencies = None;
+            if let Some(declared) = dependent_tx(&*tx) {
+                // Admitted with exactly its statements: the key leaves a STATEMENT authorization,
+                // which adds one, out.
+                let admitted = (dependencies_active && !proof_pool.dependencies_paused())
+                    .then(|| proof_pool.admitted(&declared.key))
+                    .flatten()
+                    .filter(|ids| *ids == declared.statement_ids())
+                    .filter(|ids| {
+                        proof_pool.fits_one_aggregate(block_statements.iter().chain(ids))
+                    });
+                let Some(ids) = admitted else {
+                    best_txs.mark_invalid(tx.signer(), tx.nonce());
+                    continue;
+                };
+                dependencies = Some(ids);
+            }
+
             // check if the job was cancelled, if so we can exit early
             if self.cancel.is_cancelled() {
                 return Ok(Some(()));
@@ -1198,6 +1225,10 @@ where
             // makes this a no-op for a plain `PayloadTransactions`.
             best_txs.on_commit(CommittedTxGas { canonical_gas_used: tx_gas_used, evm_gas_used });
 
+            if let Some(ids) = dependencies {
+                block_statements.extend(ids);
+            }
+
             // Record the successfully committed transaction for callers that want per-call
             // visibility.
             if let Some(sink) = committed_txs.as_deref_mut() {
@@ -1207,6 +1238,13 @@ where
 
         Ok(None)
     }
+}
+
+/// The EIP-8288 dependencies `tx` has, if any, without encoding a type that cannot have them.
+fn dependent_tx<T: Encodable2718>(tx: &T) -> Option<op_alloy_consensus::DeclaredDependencies> {
+    (tx.ty() == op_alloy_consensus::AA_TX_TYPE_ID)
+        .then(|| op_alloy_consensus::declared_dependencies(&tx.encoded_2718()))
+        .flatten()
 }
 
 #[cfg(test)]

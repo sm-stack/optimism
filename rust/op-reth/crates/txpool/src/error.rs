@@ -45,6 +45,56 @@ impl PoolTransactionError for InvalidCrossTx {
     }
 }
 
+/// Why an EIP-8430 transaction is refused at admission.
+#[derive(thiserror::Error, Debug)]
+pub enum InvalidAaTx {
+    /// The bytes are not an EIP-8430 transaction.
+    #[error("malformed EIP-8430 transaction")]
+    Malformed,
+    /// A state-independent validity rule failed, or the payer's signature does not verify.
+    #[error(transparent)]
+    Static(#[from] op_alloy_consensus::AaTxError),
+    /// The current block is outside the validity window.
+    #[error("outside the validity window")]
+    OutsideValidityWindow,
+    /// The payer's authentication reserves more than `MAX_AUTHENTICATION_GAS`.
+    #[error("the payer authentication reserves too much gas")]
+    PayerAuthenticationGas,
+    /// `gas_limit` does not cover the sender's calldata floor.
+    #[error("gas limit {gas_limit} below the calldata floor {floor}")]
+    BelowFloor {
+        /// The transaction's gas limit.
+        gas_limit: u64,
+        /// The sender's share of the calldata floor.
+        floor: u64,
+    },
+    /// The payer cannot cover `max_fee_per_gas * effective_gas_limit` plus the L1 data and operator
+    /// fees.
+    #[error("the payer cannot cover the maximum gas, L1 data and operator fees")]
+    PayerFunds,
+    /// The transaction declares EIP-8288 dependencies: it must be sent with their proofs
+    /// (`optimism_sendRawTransactionWithStatementProofs`), which verifies and admits them, so an
+    /// aggregate can prove them.
+    #[error("transactions with dependencies must be sent with their proofs")]
+    Dependencies,
+    /// The EIP-8130 Keystore does not authorize the sender's or the payer's actor.
+    #[error("{0}")]
+    Keystore(op_revm::transaction::error::AaTxInvalid),
+}
+
+impl PoolTransactionError for InvalidAaTx {
+    fn is_bad_transaction(&self) -> bool {
+        !matches!(
+            self,
+            Self::OutsideValidityWindow | Self::PayerFunds | Self::Dependencies | Self::Keystore(_)
+        )
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -49,6 +49,7 @@ use reth_optimism_payload_builder::{
     OpBuiltPayload, OpExecData, OpPayloadBuilderAttributes, OpPayloadPrimitives,
     builder::OpPayloadTransactions,
     config::{OpBuilderConfig, OpDAConfig, OpGasLimitConfig, OperatorSdmOptIn},
+    proof_aggregation::ProofAggregationPool,
 };
 use reth_optimism_primitives::{DepositReceipt, OpPrimitives};
 use reth_optimism_rpc::{
@@ -66,7 +67,8 @@ use reth_optimism_rpc::{
 use reth_optimism_storage::OpStorage;
 use reth_optimism_trie::{OpProofsStorage, db::MdbxProofsStorage};
 use reth_optimism_txpool::{
-    OpPool, OpPooledTx, interop::InteropFailsafe, interop_filter::InteropFilterClient,
+    DependencyAdmissions, OpPool, OpPooledTx, interop::InteropFailsafe,
+    interop_filter::InteropFilterClient,
 };
 use reth_primitives_traits::header::HeaderMut;
 use reth_provider::{
@@ -229,6 +231,9 @@ pub struct OpNode {
     /// Local operator opt-in for SDM `PostExec` production. Shared (via Arc clones) between the
     /// payload builder and the `admin_setOperatorSdmOptIn` RPC handler.
     pub operator_sdm_opt_in: OperatorSdmOptIn,
+    /// Dependency and proof aggregate bookkeeping, shared between the payload builder and the
+    /// proof aggregation RPC.
+    pub proof_aggregation_pool: ProofAggregationPool,
     /// Interop failsafe gate, shared between the txpool's interop filter client (writer) and the
     /// payload builder (reader, to exclude interop txs while it is active).
     pub interop_failsafe: InteropFailsafe,
@@ -255,11 +260,27 @@ impl OpNode {
     /// Creates a new instance of the Optimism node type.
     pub fn new(args: RollupArgs) -> Self {
         let operator_sdm_opt_in = OperatorSdmOptIn::configured(args.operator_sdm_opt_in);
+        // op-aggregator proves the sequencer's aggregates over the authenticated endpoint: without
+        // it, the sequencer takes no dependent transaction, which no aggregate would answer for. A
+        // node forwarding transactions to the sequencer admits none, and waits for no aggregator.
+        let proof_aggregation_pool = if args.testing_disable_proof_aggregation {
+            ProofAggregationPool::without_aggregation()
+        } else if args.sequencer.is_none() {
+            ProofAggregationPool::default().requiring_aggregator(
+                reth_optimism_payload_builder::proof_aggregation::AGGREGATOR_TIMEOUT,
+            )
+        } else {
+            ProofAggregationPool::default()
+        }
+        .with_verifier(std::sync::Arc::new(op_leanvm_tree::LeanVmTreeVerifier));
+        let proof_aggregation_pool =
+            proof_aggregation_pool.with_run_blocks(args.proof_aggregation_run_blocks);
         Self {
             args,
             da_config: OpDAConfig::default(),
             gas_limit_config: OpGasLimitConfig::default(),
             operator_sdm_opt_in,
+            proof_aggregation_pool,
             interop_failsafe: InteropFailsafe::default(),
         }
     }
@@ -290,6 +311,7 @@ impl OpNode {
             da_config: self.da_config.clone(),
             gas_limit_config: self.gas_limit_config.clone(),
             operator_sdm_opt_in: self.operator_sdm_opt_in.clone(),
+            proof_aggregation_pool: self.proof_aggregation_pool.clone(),
             interop_failsafe: self.interop_failsafe.clone(),
             max_uncompressed_block_size: self.args.max_uncompressed_block_size,
         }
@@ -311,6 +333,10 @@ impl OpNode {
                 self.args.interop_safety_level,
             )
             .with_interop_failsafe(self.interop_failsafe.clone())
+            .with_dependency_admissions({
+                let pool = self.proof_aggregation_pool.clone();
+                DependencyAdmissions::new(move |hash| pool.admitted(hash))
+            })
     }
 
     /// Returns the payload builder stock components install.
@@ -348,6 +374,7 @@ impl OpNode {
             .with_da_config(self.da_config.clone())
             .with_gas_limit_config(self.gas_limit_config.clone())
             .with_operator_sdm_opt_in(self.operator_sdm_opt_in.clone())
+            .with_proof_aggregation_pool(self.proof_aggregation_pool.clone())
             .with_enable_tx_conditional(self.args.enable_tx_conditional)
             .with_min_suggested_priority_fee(self.args.min_suggested_priority_fee)
             .with_historical_rpc(self.args.historical_rpc.clone())
@@ -569,6 +596,9 @@ pub struct OpAddOns<
     pub gas_limit_config: OpGasLimitConfig,
     /// Shared SDM operator opt-in flag; mutated by the `admin_setOperatorSdmOptIn` RPC.
     pub operator_sdm_opt_in: OperatorSdmOptIn,
+    /// Dependency and proof aggregate bookkeeping, shared between the payload builder and the
+    /// proof aggregation RPC.
+    pub proof_aggregation_pool: ProofAggregationPool,
     /// Sequencer client, configured to forward submitted transactions to sequencer of given OP
     /// network.
     pub sequencer_url: Option<String>,
@@ -595,6 +625,7 @@ where
         da_config: OpDAConfig,
         gas_limit_config: OpGasLimitConfig,
         operator_sdm_opt_in: OperatorSdmOptIn,
+        proof_aggregation_pool: ProofAggregationPool,
         sequencer_url: Option<String>,
         sequencer_headers: Vec<String>,
         historical_rpc: Option<String>,
@@ -606,6 +637,7 @@ where
             da_config,
             gas_limit_config,
             operator_sdm_opt_in,
+            proof_aggregation_pool,
             sequencer_url,
             sequencer_headers,
             historical_rpc,
@@ -658,6 +690,7 @@ where
             da_config,
             gas_limit_config,
             operator_sdm_opt_in,
+            proof_aggregation_pool,
             sequencer_url,
             sequencer_headers,
             historical_rpc,
@@ -670,6 +703,7 @@ where
             da_config,
             gas_limit_config,
             operator_sdm_opt_in,
+            proof_aggregation_pool,
             sequencer_url,
             sequencer_headers,
             historical_rpc,
@@ -688,6 +722,7 @@ where
             da_config,
             gas_limit_config,
             operator_sdm_opt_in,
+            proof_aggregation_pool,
             sequencer_url,
             sequencer_headers,
             enable_tx_conditional,
@@ -700,6 +735,7 @@ where
             da_config,
             gas_limit_config,
             operator_sdm_opt_in,
+            proof_aggregation_pool,
             sequencer_url,
             sequencer_headers,
             historical_rpc,
@@ -718,6 +754,7 @@ where
             da_config,
             gas_limit_config,
             operator_sdm_opt_in,
+            proof_aggregation_pool,
             sequencer_url,
             sequencer_headers,
             enable_tx_conditional,
@@ -730,6 +767,7 @@ where
             da_config,
             gas_limit_config,
             operator_sdm_opt_in,
+            proof_aggregation_pool,
             sequencer_url,
             sequencer_headers,
             historical_rpc,
@@ -751,6 +789,7 @@ where
             da_config,
             gas_limit_config,
             operator_sdm_opt_in,
+            proof_aggregation_pool,
             sequencer_url,
             sequencer_headers,
             enable_tx_conditional,
@@ -763,6 +802,7 @@ where
             da_config,
             gas_limit_config,
             operator_sdm_opt_in,
+            proof_aggregation_pool,
             sequencer_url,
             sequencer_headers,
             historical_rpc,
@@ -889,6 +929,7 @@ where
             da_config,
             gas_limit_config,
             operator_sdm_opt_in,
+            proof_aggregation_pool,
             sequencer_url,
             sequencer_headers,
             enable_tx_conditional,
@@ -900,6 +941,25 @@ where
         ctx.node.task_executor().spawn_critical_task(
             "op chain head metrics",
             crate::maintain_chain_head_metrics(ctx.node.provider().canonical_state_stream()),
+        );
+        // Track the dependent transactions the canonical chain holds, and the safe and finalized
+        // heads that decide which aggregates the batcher still posts.
+        ctx.node.task_executor().spawn_critical_task(
+            "proof aggregation pool sync",
+            crate::sync_proof_aggregation_pool(
+                proof_aggregation_pool.clone(),
+                ctx.node.provider().canonical_state_stream(),
+            ),
+        );
+        ctx.node.task_executor().spawn_critical_task(
+            "proof aggregation forkchoice sync",
+            crate::sync_proof_aggregation_forkchoice(
+                proof_aggregation_pool.clone(),
+                reth_chain_state::ForkChoiceSubscriptions::safe_block_stream(ctx.node.provider()),
+                reth_chain_state::ForkChoiceSubscriptions::finalized_block_stream(
+                    ctx.node.provider(),
+                ),
+            ),
         );
 
         let eth_config =
@@ -953,6 +1013,17 @@ where
             None
         };
 
+        // op-aggregator proves the sequencer's aggregates over the authenticated endpoint.
+        let aggregator_ext =
+            reth_optimism_rpc::aggregator::OpAggregatorApi::new(proof_aggregation_pool.clone());
+        let proof_aggregation_ext =
+            reth_optimism_rpc::proof_aggregation::OpProofAggregationApi::new(
+                proof_aggregation_pool,
+                ctx.node.pool().clone(),
+                ctx.config.chain.chain().id(),
+                sequencer_client.clone(),
+            );
+
         let tx_conditional_ext: OpEthExtApi<N::Pool, N::Provider> = OpEthExtApi::new(
             sequencer_client,
             ctx.node.pool().clone(),
@@ -997,6 +1068,33 @@ where
                     debug!(target: "reth::cli", "Installing admin SDM opt-in rpc endpoint");
                     auth_module.merge_auth_methods(sdm_admin_ext.into_rpc())?;
                 }
+
+                use reth_optimism_rpc::proof_aggregation::{
+                    ProofAggregationAdminApiServer, ProofStatementApiServer,
+                };
+                modules.merge_if_module_configured(
+                    RethRpcModule::Eth,
+                    ProofStatementApiServer::into_rpc(proof_aggregation_ext.clone()),
+                )?;
+                modules.add_or_replace_if_module_configured(
+                    RethRpcModule::Admin,
+                    ProofAggregationAdminApiServer::into_rpc(proof_aggregation_ext.clone()),
+                )?;
+                if modules.module_config().contains_any(&RethRpcModule::Admin) {
+                    debug!(target: "reth::cli", "Installing admin proof aggregation rpc endpoint");
+                    auth_module.merge_auth_methods(ProofAggregationAdminApiServer::into_rpc(
+                        proof_aggregation_ext,
+                    ))?;
+                }
+
+                // op-aggregator folds the sequencer's statements on the authenticated endpoint
+                // only.
+                debug!(target: "reth::cli", "Installing aggregator rpc endpoint");
+                auth_module.merge_auth_methods(
+                    op_aggregator::api::AggregatorApiServer::into_rpc(op_aggregator::api::Served(
+                        aggregator_ext,
+                    )),
+                )?;
 
                 // install the debug namespace in the authenticated if configured
                 if modules.module_config().contains_any(&RethRpcModule::Debug) {
@@ -1090,6 +1188,8 @@ pub struct OpAddOnsBuilder<NetworkT, RpcMiddleware = Identity> {
     gas_limit_config: Option<OpGasLimitConfig>,
     /// Shared SDM operator opt-in flag for the payload builder and admin RPC.
     operator_sdm_opt_in: Option<OperatorSdmOptIn>,
+    /// Shared proof aggregation queue for the payload builder and its RPC.
+    proof_aggregation_pool: Option<ProofAggregationPool>,
     /// Enable transaction conditionals.
     enable_tx_conditional: bool,
     /// Whether to retain forwarded transactions in the local pool after
@@ -1118,6 +1218,7 @@ impl<NetworkT> Default for OpAddOnsBuilder<NetworkT> {
             da_config: None,
             gas_limit_config: None,
             operator_sdm_opt_in: None,
+            proof_aggregation_pool: None,
             enable_tx_conditional: false,
             retain_forwarded_txs: false,
             min_suggested_priority_fee: 1_000_000,
@@ -1159,6 +1260,13 @@ impl<NetworkT, RpcMiddleware> OpAddOnsBuilder<NetworkT, RpcMiddleware> {
     #[must_use]
     pub fn with_operator_sdm_opt_in(mut self, operator_sdm_opt_in: OperatorSdmOptIn) -> Self {
         self.operator_sdm_opt_in = Some(operator_sdm_opt_in);
+        self
+    }
+
+    /// Provide the shared proof aggregation queue.
+    #[must_use]
+    pub fn with_proof_aggregation_pool(mut self, pool: ProofAggregationPool) -> Self {
+        self.proof_aggregation_pool = Some(pool);
         self
     }
 
@@ -1204,6 +1312,7 @@ impl<NetworkT, RpcMiddleware> OpAddOnsBuilder<NetworkT, RpcMiddleware> {
             da_config,
             gas_limit_config,
             operator_sdm_opt_in,
+            proof_aggregation_pool,
             enable_tx_conditional,
             retain_forwarded_txs,
             min_suggested_priority_fee,
@@ -1220,6 +1329,7 @@ impl<NetworkT, RpcMiddleware> OpAddOnsBuilder<NetworkT, RpcMiddleware> {
             da_config,
             gas_limit_config,
             operator_sdm_opt_in,
+            proof_aggregation_pool,
             enable_tx_conditional,
             retain_forwarded_txs,
             min_suggested_priority_fee,
@@ -1262,6 +1372,7 @@ impl<NetworkT, RpcMiddleware> OpAddOnsBuilder<NetworkT, RpcMiddleware> {
             da_config,
             gas_limit_config,
             operator_sdm_opt_in,
+            proof_aggregation_pool,
             enable_tx_conditional,
             retain_forwarded_txs,
             min_suggested_priority_fee,
@@ -1292,6 +1403,7 @@ impl<NetworkT, RpcMiddleware> OpAddOnsBuilder<NetworkT, RpcMiddleware> {
             da_config.unwrap_or_default(),
             gas_limit_config.unwrap_or_default(),
             operator_sdm_opt_in.unwrap_or_default(),
+            proof_aggregation_pool.unwrap_or_default(),
             sequencer_url,
             sequencer_headers,
             historical_rpc,
@@ -1380,6 +1492,8 @@ pub struct OpPoolBuilder<
     pub interop_safety_level: SafetyLevel,
     /// Shared interop failsafe gate, passed to the interop filter client this builder constructs.
     pub interop_failsafe: InteropFailsafe,
+    /// Which transactions with dependencies the pool may hold.
+    pub dependency_admissions: DependencyAdmissions,
     /// The transaction ordering used by the pool.
     pub ordering: O,
     /// The validator wrapper applied to the built [`OpTransactionValidator`].
@@ -1397,6 +1511,7 @@ impl<T> Default for OpPoolBuilder<T> {
             interop_min_responses: None,
             interop_safety_level: SafetyLevel::CrossUnsafe,
             interop_failsafe: InteropFailsafe::default(),
+            dependency_admissions: DependencyAdmissions::default(),
             ordering: CoinbaseTipOrdering::default(),
             validator_wrapper: IdentityValidatorWrapper,
             _pd: Default::default(),
@@ -1413,6 +1528,7 @@ impl<T, O: Clone, W: Clone> Clone for OpPoolBuilder<T, O, W> {
             interop_min_responses: self.interop_min_responses,
             interop_safety_level: self.interop_safety_level,
             interop_failsafe: self.interop_failsafe.clone(),
+            dependency_admissions: self.dependency_admissions.clone(),
             ordering: self.ordering.clone(),
             validator_wrapper: self.validator_wrapper.clone(),
             _pd: core::marker::PhantomData,
@@ -1457,6 +1573,12 @@ impl<T, O, W> OpPoolBuilder<T, O, W> {
         self
     }
 
+    /// Sets which transactions with dependencies the pool may hold.
+    pub fn with_dependency_admissions(mut self, admissions: DependencyAdmissions) -> Self {
+        self.dependency_admissions = admissions;
+        self
+    }
+
     /// Sets a custom transaction ordering for the pool, replacing the default
     /// [`CoinbaseTipOrdering`].
     pub fn with_ordering<NewO>(self, ordering: NewO) -> OpPoolBuilder<T, NewO, W> {
@@ -1467,6 +1589,7 @@ impl<T, O, W> OpPoolBuilder<T, O, W> {
             interop_min_responses: self.interop_min_responses,
             interop_safety_level: self.interop_safety_level,
             interop_failsafe: self.interop_failsafe,
+            dependency_admissions: self.dependency_admissions,
             ordering,
             validator_wrapper: self.validator_wrapper,
             _pd: core::marker::PhantomData,
@@ -1487,6 +1610,7 @@ impl<T, O, W> OpPoolBuilder<T, O, W> {
             interop_min_responses: self.interop_min_responses,
             interop_safety_level: self.interop_safety_level,
             interop_failsafe: self.interop_failsafe,
+            dependency_admissions: self.dependency_admissions,
             ordering: self.ordering,
             validator_wrapper,
             _pd: core::marker::PhantomData,
@@ -1560,11 +1684,13 @@ where
                     // moved-in wrapper is taken out of an `Option` on the single call.
                     let mut validator_wrapper = Some(validator_wrapper);
                     let interop_client = interop_client.clone();
+                    let dependency_admissions = self.dependency_admissions.clone();
                     move |validator| {
                         let v = OpTransactionValidator::new(validator)
                             // In --dev mode we can't require gas fees because we're unable to
                             // decode the L1 block info
-                            .require_l1_data_gas_fee(!ctx.config().dev.dev);
+                            .require_l1_data_gas_fee(!ctx.config().dev.dev)
+                            .with_dependency_admissions(dependency_admissions.clone());
                         let op_validator = if let Some(client) = interop_client.clone() {
                             v.with_interop(client)
                         } else {
@@ -1719,6 +1845,13 @@ impl OpPayloadBuilder {
     #[must_use]
     pub fn with_operator_sdm_opt_in(mut self, operator_sdm_opt_in: OperatorSdmOptIn) -> Self {
         self.builder_config.operator_sdm_opt_in = operator_sdm_opt_in;
+        self
+    }
+
+    /// Provide the shared proof aggregation queue read by the builder.
+    #[must_use]
+    pub fn with_proof_aggregation_pool(mut self, pool: ProofAggregationPool) -> Self {
+        self.builder_config.proof_aggregation_pool = pool;
         self
     }
 
@@ -2142,6 +2275,58 @@ mod tests {
         assert!(
             cfg.operator_sdm_opt_in.enabled(),
             "builder_config must carry the node's live SDM opt-in handle, not a detached copy"
+        );
+    }
+
+    /// A node forwarding transactions to the sequencer admits dependent transactions there, and
+    /// waits for no op-aggregator.
+    #[test]
+    fn forwarding_nodes_wait_for_no_op_aggregator() {
+        let node = OpNode::new(RollupArgs {
+            sequencer: Some(String::from("http://sequencer:8545")),
+            ..Default::default()
+        });
+        assert_eq!(node.proof_aggregation_pool.dependencies_refused(), None);
+        assert_eq!(
+            OpNode::new(RollupArgs::default()).proof_aggregation_pool.dependencies_refused(),
+            Some(
+                reth_optimism_payload_builder::proof_aggregation::ProofAggregationPoolError::AggregatorAbsent
+            )
+        );
+    }
+
+    /// The proof aggregation RPC writes the node's pool after startup; the builder must read it.
+    #[test]
+    fn builder_config_proof_aggregation_pool_is_live_shared_handle() {
+        use reth_optimism_payload_builder::proof_aggregation::{
+            ProgramLeaf, ProofAggregationPoolError, StatementProof, StatementSource,
+        };
+
+        let node = OpNode::new(RollupArgs::default());
+        let cfg = node.builder_config();
+        let proof = StatementProof {
+            statement: Default::default(),
+            source: StatementSource::Program(std::sync::Arc::new(ProgramLeaf {
+                program: Default::default(),
+                verifying_key: Default::default(),
+                proof: Default::default(),
+                members: vec![Default::default()],
+            })),
+        };
+        let (hash, id) = (alloy_primitives::B256::repeat_byte(1), proof.statement.id());
+
+        // A node takes no dependent transaction until op-aggregator is there to prove aggregates.
+        assert_eq!(
+            node.proof_aggregation_pool.admit(hash, vec![id], vec![proof.clone()]),
+            Err(ProofAggregationPoolError::AggregatorAbsent)
+        );
+        node.proof_aggregation_pool.aggregator_contacted();
+        node.proof_aggregation_pool.admit(hash, vec![id], vec![proof]).unwrap();
+
+        assert_eq!(
+            cfg.proof_aggregation_pool.admitted(&hash),
+            Some(vec![id]),
+            "builder_config must carry the node's live proof aggregation pool, not a detached copy"
         );
     }
 }

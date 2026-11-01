@@ -209,10 +209,13 @@ impl OpReceiptFieldsBuilder {
         } else {
             let raw_tx = tx.encoded_2718();
 
+            // An EIP-8430 transaction also pays for its dependencies' share of the proof aggregate.
+            let dependencies = tx.as_aa().map_or(0, |aa| aa.dependency_count());
             self.l1_fee = Some(
                 l1_block_info
                     .l1_tx_data_fee(chain_spec, timestamp, &raw_tx, tx.is_deposit())
                     .map_err(|_| OpEthApiError::L1BlockFeeError)?
+                    .saturating_add(l1_block_info.dependency_l1_cost(dependencies))
                     .saturating_to(),
             );
 
@@ -221,6 +224,7 @@ impl OpReceiptFieldsBuilder {
                     .l1_data_gas(chain_spec, timestamp, &raw_tx)
                     .map_err(|_| OpEthApiError::L1BlockGasError)?
                     .saturating_add(l1_block_info.l1_fee_overhead.unwrap_or_default())
+                    .saturating_add(op_revm::L1BlockInfo::dependency_data_gas(dependencies))
                     .saturating_to(),
             );
         }
@@ -315,6 +319,8 @@ pub struct OpReceiptBuilder {
     pub core_receipt: TransactionReceipt<ReceiptWithBloom<OpReceipt<Log>>>,
     /// Additional OP receipt fields.
     pub op_receipt_fields: OpTransactionReceiptFields,
+    /// The resolved payer of an EIP-8430 transaction.
+    pub payer: Option<alloy_primitives::Address>,
 }
 
 impl OpReceiptBuilder {
@@ -331,6 +337,22 @@ impl OpReceiptBuilder {
         let timestamp = input.meta.timestamp;
         let block_number = input.meta.block_number;
         let tx_signed = *input.tx.inner();
+        // An EIP-8430 transaction's payer: the sender, the named payer, or the key that signed an
+        // open payer's authorization (the block that holds it was valid, so it recovers).
+        let payer = tx_signed.as_aa().and_then(|aa| {
+            let sender = input.tx.signer();
+            match aa.inner().payer {
+                op_alloy_consensus::Payer::SelfPay => Some(sender),
+                op_alloy_consensus::Payer::Named(payer) => Some(payer),
+                op_alloy_consensus::Payer::Open => aa
+                    .inner()
+                    .recover_payer(sender)
+                    .inspect_err(|err| {
+                        tracing::warn!(target: "rpc::eth", %err, "an included EIP-8430 transaction's payer does not recover");
+                    })
+                    .ok(),
+            }
+        });
         let mut core_receipt = build_receipt(input, None, |receipt, next_log_index, meta| {
             let map_logs = move |receipt: alloy_consensus::Receipt| {
                 let Receipt { status, cumulative_gas_used, logs } = receipt;
@@ -344,6 +366,10 @@ impl OpReceiptBuilder {
                 OpReceipt::Eip7702(receipt) => OpReceipt::Eip7702(map_logs(receipt)),
                 OpReceipt::PostExec(receipt) => OpReceipt::PostExec(map_logs(receipt)),
                 OpReceipt::Deposit(receipt) => OpReceipt::Deposit(receipt.map_inner(map_logs)),
+                OpReceipt::Aa(receipt) => OpReceipt::Aa(op_alloy_consensus::OpAaReceipt {
+                    inner: map_logs(receipt.inner),
+                    committed_phases: receipt.committed_phases,
+                }),
             };
             mapped_receipt.into_with_bloom()
         });
@@ -388,13 +414,13 @@ impl OpReceiptBuilder {
             .op_gas_refund(op_gas_refund)
             .build();
 
-        Ok(Self { core_receipt, op_receipt_fields })
+        Ok(Self { core_receipt, op_receipt_fields, payer })
     }
 
     /// Builds [`OpTransactionReceipt`] by combining core (l1) receipt fields and additional OP
     /// receipt fields.
     pub fn build(self) -> OpTransactionReceipt {
-        let Self { core_receipt: inner, op_receipt_fields } = self;
+        let Self { core_receipt: inner, op_receipt_fields, payer } = self;
 
         let OpTransactionReceiptFields {
             l1_block_info,
@@ -403,7 +429,7 @@ impl OpReceiptBuilder {
             deposit_receipt_version: _,
         } = op_receipt_fields;
 
-        OpTransactionReceipt { inner, l1_block_info, op_gas_refund }
+        OpTransactionReceipt { inner, l1_block_info, op_gas_refund, payer }
     }
 }
 

@@ -1261,6 +1261,11 @@ Rollup:
 
           [default: 1000000]
 
+      --rollup.proof-aggregation-run-blocks <BLOCKS>
+          How many L2 blocks a proof aggregation run spans: a run ends at block `n` when `(n + 1) % K == 0`, where op-batcher ends the channel holding it, so that an aggregate shares the channel of its blocks. 0 leaves runs to op-aggregator
+
+          [default: 0]
+
       --rollup.max-uncompressed-block-size <MAX_UNCOMPRESSED_BLOCK_SIZE>
           Maximum cumulative uncompressed (EIP-2718 encoded) block size in bytes.
 

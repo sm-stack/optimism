@@ -437,6 +437,7 @@ where
     N: RpcNodeCore,
     OpEthApiError: FromEvmError<N::Evm>,
     Rpc: RpcConvert<Primitives = N::Primitives, Error = OpEthApiError, Evm = N::Evm>,
+    reth_evm::TxEnvFor<N::Evm>: op_revm::transaction::OpTxTr,
 {
 }
 
@@ -447,6 +448,7 @@ where
     N: RpcNodeCore,
     OpEthApiError: FromEvmError<N::Evm>,
     Rpc: RpcConvert<Primitives = N::Primitives, Error = OpEthApiError, Evm = N::Evm>,
+    reth_evm::TxEnvFor<N::Evm>: op_revm::transaction::OpTxTr,
 {
 }
 

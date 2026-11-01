@@ -83,6 +83,9 @@ pub enum OpInvalidTransactionError {
     /// Transaction conditional errors.
     #[error(transparent)]
     TxConditionalErr(#[from] TxConditionalErr),
+    /// An invalid EIP-8430 transaction.
+    #[error(transparent)]
+    AaTx(op_revm::transaction::AaTxInvalid),
 }
 
 impl From<OpInvalidTransactionError> for jsonrpsee_types::error::ErrorObject<'static> {
@@ -90,7 +93,8 @@ impl From<OpInvalidTransactionError> for jsonrpsee_types::error::ErrorObject<'st
         match err {
             OpInvalidTransactionError::DepositSystemTxPostRegolith |
             OpInvalidTransactionError::HaltedDepositPostRegolith |
-            OpInvalidTransactionError::MissingEnvelopedTx => {
+            OpInvalidTransactionError::MissingEnvelopedTx |
+            OpInvalidTransactionError::AaTx(_) => {
                 rpc_err(EthRpcErrorCode::TransactionRejected.code(), err.to_string(), None)
             }
             OpInvalidTransactionError::TxConditionalErr(_) => err.into(),
@@ -109,6 +113,7 @@ impl TryFrom<OpTxError> for OpInvalidTransactionError {
             }
             OpTransactionError::HaltedDepositPostRegolith => Ok(Self::HaltedDepositPostRegolith),
             OpTransactionError::MissingEnvelopedTx => Ok(Self::MissingEnvelopedTx),
+            OpTransactionError::AaTx(reason) => Ok(Self::AaTx(reason)),
             OpTransactionError::Base(err) => Err(err),
         }
     }
